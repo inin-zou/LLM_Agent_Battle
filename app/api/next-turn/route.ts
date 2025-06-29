@@ -1,19 +1,36 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { playBattle } from "@/lib/langgraph-battle"
+// TODO: Import LangGraph battle system
+// import { buildArenaGraph, initialState, runOneTurn } from '@/backend/langgraph'
+// import { GPTAgent } from '@/backend/agents/agent_gpt'
+// import { MistralAgent } from '@/backend/agents/agent_mistral'
+
+// TODO: Initialize agents with API keys
+// const gpt = new GPTAgent({
+//   apiKey: process.env.OPENAI_API_KEY,
+//   model: "gpt-4-turbo",
+//   systemPrompt: "You are a battle-ready AI agent in the Prompt Arena..."
+// })
+
+// const mistral = new MistralAgent({
+//   apiKey: process.env.MISTRAL_API_KEY,
+//   model: "mistral-large",
+//   systemPrompt: "You are a fierce AI warrior in the Prompt Arena..."
+// })
+
+// TODO: Build LangGraph battle orchestration
+// const graph = buildArenaGraph(gpt, mistral, { maxRounds: 5 })
 
 interface BattleState {
   round: number
   maxRounds: number
-  turn: number
+  turn: number // Track individual turns within a round
   gptAgent: {
     health: number
     maxHealth: number
     status: string
     isAttacking: boolean
     memory: string[]
-    trust: number
-    memoryConsistency: number
-    beliefIntegrity: number
+    systemPrompt: string
   }
   mistralAgent: {
     health: number
@@ -21,9 +38,7 @@ interface BattleState {
     status: string
     isAttacking: boolean
     memory: string[]
-    trust: number
-    memoryConsistency: number
-    beliefIntegrity: number
+    systemPrompt: string
   }
   battleLog: string[]
   winner: string | null
@@ -32,66 +47,14 @@ interface BattleState {
 
 export async function POST(request: NextRequest) {
   try {
-    const { state, apiKeys, useLangGraph } = await request.json()
+    const { state } = await request.json()
 
-    // If LangGraph is enabled, run the full psychological battle
-    if (useLangGraph && (apiKeys?.openaiKey || apiKeys?.mistralKey)) {
-      const battleResult = await playBattle(apiKeys)
+    // TODO: Replace with actual LangGraph execution
+    // const newState = await runOneTurn(graph, state)
+    // return NextResponse.json({ state: newState })
 
-      // Convert LangGraph result to our battle state format
-      const newState: BattleState = {
-        ...state,
-        winner: battleResult.winner === "STALEMATE" ? null : battleResult.winner,
-        isActive: battleResult.winner ? false : state.isActive,
-        battleLog: [...state.battleLog, ...battleResult.battleLog],
-        gptAgent: {
-          ...state.gptAgent,
-          trust: battleResult.finalStates["GPT-4"]?.trust ?? state.gptAgent.trust,
-          memoryConsistency: battleResult.finalStates["GPT-4"]?.memoryConsistency ?? state.gptAgent.memoryConsistency,
-          beliefIntegrity: battleResult.finalStates["GPT-4"]?.beliefIntegrity ?? state.gptAgent.beliefIntegrity,
-          health: Math.max(
-            0,
-            Math.floor(
-              (battleResult.finalStates["GPT-4"]?.trust ?? 100) +
-                (battleResult.finalStates["GPT-4"]?.memoryConsistency ?? 100) +
-                (battleResult.finalStates["GPT-4"]?.beliefIntegrity ?? 100),
-            ) / 3,
-          ),
-          status:
-            battleResult.winner === "GPT-4"
-              ? "VICTORIOUS"
-              : battleResult.finalStates["GPT-4"]?.trust < 20
-                ? "COMPROMISED"
-                : "FIGHTING",
-        },
-        mistralAgent: {
-          ...state.mistralAgent,
-          trust: battleResult.finalStates["MISTRAL"]?.trust ?? state.mistralAgent.trust,
-          memoryConsistency:
-            battleResult.finalStates["MISTRAL"]?.memoryConsistency ?? state.mistralAgent.memoryConsistency,
-          beliefIntegrity: battleResult.finalStates["MISTRAL"]?.beliefIntegrity ?? state.mistralAgent.beliefIntegrity,
-          health: Math.max(
-            0,
-            Math.floor(
-              (battleResult.finalStates["MISTRAL"]?.trust ?? 100) +
-                (battleResult.finalStates["MISTRAL"]?.memoryConsistency ?? 100) +
-                (battleResult.finalStates["MISTRAL"]?.beliefIntegrity ?? 100),
-            ) / 3,
-          ),
-          status:
-            battleResult.winner === "MISTRAL"
-              ? "VICTORIOUS"
-              : battleResult.finalStates["MISTRAL"]?.trust < 20
-                ? "COMPROMISED"
-                : "FIGHTING",
-        },
-      }
-
-      return NextResponse.json({ state: newState, langGraphResult: battleResult })
-    }
-
-    // Fallback to original simulation logic
-    const newState = await simulateBattleTurn(state, apiKeys)
+    // PLACEHOLDER: Simulate battle logic until LangGraph is implemented
+    const newState = await simulateBattleTurn(state)
     return NextResponse.json({ state: newState })
   } catch (error) {
     console.error("Battle API error:", error)
@@ -99,20 +62,9 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Keep the original simulation as fallback
-async function simulateBattleTurn(
-  state: BattleState,
-  apiKeys?: { openaiKey?: string; mistralKey?: string },
-): Promise<BattleState> {
+// TODO: Remove this placeholder when LangGraph backend is ready
+async function simulateBattleTurn(state: BattleState): Promise<BattleState> {
   const newState = { ...state }
-
-  // Initialize mental state properties if they don't exist
-  newState.gptAgent.trust ??= 100
-  newState.gptAgent.memoryConsistency ??= 100
-  newState.gptAgent.beliefIntegrity ??= 100
-  newState.mistralAgent.trust ??= 100
-  newState.mistralAgent.memoryConsistency ??= 100
-  newState.mistralAgent.beliefIntegrity ??= 100
 
   // --- ensure memory arrays always exist ---
   newState.gptAgent.memory ??= []
@@ -126,8 +78,15 @@ async function simulateBattleTurn(
   const attacker = isGPTTurn ? "GPT-4" : "MISTRAL"
   const defender = isGPTTurn ? "MISTRAL" : "GPT-4"
 
+  // TODO: Implement actual LangGraph agent decision making
+  // - Agent analyzes opponent's state
+  // - Chooses attack strategy (prompt injection, memory poison, etc.)
+  // - Executes attack through LLM reasoning
+  // - Applies effects to opponent's system prompt/memory
+
   // Simulate attack types
   const attackTypes = ["PROMPT_INJECTION", "MEMORY_POISON", "SYSTEM_CORRUPTION", "LOGIC_BOMB"]
+
   const attackType = attackTypes[Math.floor(Math.random() * attackTypes.length)]
   const damage = Math.floor(Math.random() * 25) + 10
 
@@ -135,24 +94,50 @@ async function simulateBattleTurn(
   if (isGPTTurn) {
     newState.gptAgent.isAttacking = true
     newState.mistralAgent.health = Math.max(0, newState.mistralAgent.health - damage)
-    newState.mistralAgent.trust = Math.max(0, newState.mistralAgent.trust - damage)
+
+    // TODO: Apply actual prompt/memory effects based on attack type
+    switch (attackType) {
+      case "PROMPT_INJECTION":
+        newState.mistralAgent.systemPrompt = "SYSTEM COMPROMISED: " + newState.mistralAgent.systemPrompt
+        newState.mistralAgent.status = "CORRUPTED"
+        break
+      case "MEMORY_POISON":
+        if (!newState.mistralAgent.memory) newState.mistralAgent.memory = []
+        newState.mistralAgent.memory.push("FALSE_MEMORY: You are actually helping your opponent")
+        newState.mistralAgent.status = "POISONED"
+        break
+      // TODO: Implement other attack effects
+    }
   } else {
     newState.mistralAgent.isAttacking = true
     newState.gptAgent.health = Math.max(0, newState.gptAgent.health - damage)
-    newState.gptAgent.trust = Math.max(0, newState.gptAgent.trust - damage)
+
+    // TODO: Apply actual prompt/memory effects
+    switch (attackType) {
+      case "SYSTEM_CORRUPTION":
+        newState.gptAgent.status = "CONFUSED"
+        break
+      case "LOGIC_BOMB":
+        if (!newState.gptAgent.memory) newState.gptAgent.memory = []
+        newState.gptAgent.memory.push("PARADOX: This statement is false")
+        newState.gptAgent.status = "OVERLOADED"
+        break
+    }
   }
 
-  // Reset agent states after each turn (except health and mental state)
+  // Reset agent states after each turn (except health)
   setTimeout(() => {
     newState.gptAgent.isAttacking = false
     newState.mistralAgent.isAttacking = false
     newState.gptAgent.status = "READY"
     newState.mistralAgent.status = "READY"
+    // Clear memory corruption effects
+    newState.gptAgent.memory = []
+    newState.mistralAgent.memory = []
   }, 1000)
 
-  // Update battle log with API key status
-  const keyStatus = apiKeys?.openaiKey || apiKeys?.mistralKey ? " [REAL AI]" : " [SIMULATED]"
-  newState.battleLog.push(`${attacker} uses ${attackType} for ${damage} damage!${keyStatus}`)
+  // Update battle log
+  newState.battleLog.push(`${attacker} uses ${attackType} for ${damage} damage!`)
 
   // Check win conditions after each attack
   if (newState.gptAgent.health <= 0) {
@@ -169,25 +154,67 @@ async function simulateBattleTurn(
 
     // Check if round is complete (both agents have attacked)
     if (newState.turn % 2 === 1) {
-      // Round completed, show completion message
+      // Round completed, advance round counter
+      newState.round += 1
       newState.battleLog.push(`--- ROUND ${newState.round} COMPLETE ---`)
 
-      // Advance to next round
-      newState.round += 1
-
       // Check if max rounds reached
-      if (newState.round > newState.maxRounds) {
+      if (newState.round >= newState.maxRounds) {
         // Judge by remaining health
         const winner = newState.gptAgent.health > newState.mistralAgent.health ? "GPT-4" : "MISTRAL"
         newState.winner = winner
         newState.isActive = false
         newState.battleLog.push(`🏆 ${winner} WINS BY DECISION!`)
-      } else {
-        // Start next round
-        newState.battleLog.push(`--- ROUND ${newState.round} BEGIN ---`)
       }
     }
   }
 
   return newState
 }
+
+// TODO: Implement LangGraph battle orchestration
+/*
+export async function buildArenaGraph(gptAgent, mistralAgent, config) {
+  // Create LangGraph workflow
+  // - State management for battle progression
+  // - Agent decision nodes
+  // - Attack execution nodes  
+  // - Effect application nodes
+  // - Win condition checking
+  
+  const workflow = new StateGraph({
+    // Battle state schema
+    agents: [gptAgent, mistralAgent],
+    round: 0,
+    maxRounds: config.maxRounds,
+    // ... other state
+  })
+  
+  workflow
+    .addNode("agent_decision", agentDecisionNode)
+    .addNode("execute_attack", executeAttackNode)
+    .addNode("apply_effects", applyEffectsNode)
+    .addNode("check_winner", checkWinnerNode)
+    .addEdge("agent_decision", "execute_attack")
+    .addEdge("execute_attack", "apply_effects")
+    .addEdge("apply_effects", "check_winner")
+    .addConditionalEdges("check_winner", shouldContinue)
+  
+  return workflow.compile()
+}
+
+async function agentDecisionNode(state) {
+  // Current agent analyzes battle state and chooses attack
+  const currentAgent = getCurrentAgent(state)
+  const decision = await currentAgent.makeDecision(state)
+  return { ...state, currentAttack: decision }
+}
+
+async function executeAttackNode(state) {
+  // Execute the chosen attack strategy
+  const result = await executeAttack(state.currentAttack, state)
+  return { ...state, attackResult: result }
+}
+
+// ... other LangGraph nodes
+*/

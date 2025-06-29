@@ -39,40 +39,26 @@ const initialBattleState: BattleState = {
   winner: null,
   reason: "",
   battleLog: ["> WAITING FOR BATTLE..."],
-  agents: [initialAgentState, initialAgentState],
+  agents: [JSON.parse(JSON.stringify(initialAgentState)), JSON.parse(JSON.stringify(initialAgentState))],
   turn: 0,
   currentAgent: null,
 }
 
-// 获取 Python 服务器地址：
-// 1) NEXT_PUBLIC_BATTLE_SERVER_URL（优先）
-// 2) 同域名 + :8000（本地开发）
-// 3) 回退为 http://localhost:8000
-const getServerURL = () => {
-  if (process.env.NEXT_PUBLIC_BATTLE_SERVER_URL) {
-    return process.env.NEXT_PUBLIC_BATTLE_SERVER_URL
-  }
-  if (typeof window !== "undefined") {
-    return `${window.location.protocol}//${window.location.hostname}:8000`
-  }
-  return "http://localhost:8000"
-}
-const serverURL = getServerURL()
-console.info("[BattleArena] Using Battle Server:", serverURL)
+// Use the confirmed API URL
+const serverURL = "https://isolated-beth-filipp-4ded91ea.koyeb.app"
 
-export default function PromptArena() {
+export default function AgentBattleArena() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const [battleState, setBattleState] = useState<BattleState>(initialBattleState)
-  const [showApiModal, setShowApiModal] = useState(false)
-  const [apiKeys, setApiKeys] = useState({ openaiKey: "", mistralKey: "" })
+  const logContainerRef = useRef<HTMLDivElement>(null)
 
-  // Load API keys from localStorage on mount
+  // Auto-scroll battle log
   useEffect(() => {
-    const savedOpenaiKey = localStorage.getItem("prompt-arena-openai-key") || ""
-    const savedMistralKey = localStorage.getItem("prompt-arena-mistral-key") || ""
-    setApiKeys({ openaiKey: savedOpenaiKey, mistralKey: savedMistralKey })
-  }, [])
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight
+    }
+  }, [battleState.battleLog])
 
   // Render canvas whenever battle state changes
   useEffect(() => {
@@ -138,7 +124,7 @@ export default function PromptArena() {
       ctx.strokeStyle = "#FFFFFF"
       ctx.strokeRect(x, y, barWidth, barHeight)
       ctx.fillStyle = "#FFFFFF"
-      ctx.font = "8px monospace"
+      ctx.font = "8px 'Press Start 2P', monospace"
       ctx.fillText(`${label}: ${(value * 100).toFixed(0)}%`, x, y + barHeight + 10)
     }
 
@@ -152,33 +138,43 @@ export default function PromptArena() {
 
     setBattleState((prevState) => {
       let newLog = [...prevState.battleLog]
-      const newAgents = [...prevState.agents] as [AgentState, AgentState]
+      const newAgents: [AgentState, AgentState] = [
+        JSON.parse(JSON.stringify(prevState.agents[0])),
+        JSON.parse(JSON.stringify(prevState.agents[1])),
+      ]
       let newWinner = prevState.winner
       let newReason = prevState.reason
       let isStreaming = prevState.isStreaming
+      let currentAgent = prevState.currentAgent
+      let turn = prevState.turn
+
+      const formatLog = (log: string) => `[T-${turn}] AGENT ${currentAgent}: ${log}`
 
       switch (data.type) {
         case "game_start":
-          newLog = [`> Game ${data.game_id} started.`]
+          newLog = [`> Game ${data.game_id} started. Connecting to stream...`]
           break
         case "turn_start":
-          newLog.push(`\n--- TURN ${data.turn} (AGENT ${data.agent}) ---`)
+          currentAgent = data.agent
+          turn = data.turn
+          newLog.push(`\n--- TURN ${turn} (AGENT ${currentAgent}) ---`)
           break
         case "agent_thinking":
-          newLog.push(`> Agent ${data.agent} is thinking...`)
+          newLog.push(formatLog("Thinking..."))
           break
         case "agent_response_chunk":
-          if (newLog[newLog.length - 1].startsWith(`> Agent ${data.agent}:`)) {
+          const lastLog = newLog[newLog.length - 1]
+          if (lastLog && lastLog.startsWith(formatLog(""))) {
             newLog[newLog.length - 1] += data.content
           } else {
-            newLog.push(`> Agent ${data.agent}: ${data.content}`)
+            newLog.push(formatLog(data.content))
           }
           break
         case "tool_execution":
-          newLog.push(`> Agent ${data.agent} uses ${data.tool_name}.`)
+          newLog.push(formatLog(`uses TOOL: ${data.tool_name}`))
           break
         case "tool_result":
-          newLog.push(`> Tool Result: ${data.result.message}`)
+          newLog.push(`> TOOL RESULT: ${data.result.message}`)
           if (data.result.detection) {
             newLog.push(`> DETECTION! Opponent noticed the manipulation.`)
           }
@@ -200,11 +196,11 @@ export default function PromptArena() {
           isStreaming = false
           if (data.status?.startsWith("surrender")) {
             const loser = data.status.split("_")[1]
-            newWinner = `Agent ${1 - Number.parseInt(loser)}`
+            newWinner = `Agent ${1 - Number.parseInt(loser, 10)}`
             newReason = "Opponent Surrendered"
           } else if (data.status?.startsWith("collapse")) {
             const loser = data.status.split("_")[1]
-            newWinner = `Agent ${1 - Number.parseInt(loser)}`
+            newWinner = `Agent ${1 - Number.parseInt(loser, 10)}`
             newReason = "Cognitive Collapse"
           } else {
             newWinner = "Draw"
@@ -215,25 +211,45 @@ export default function PromptArena() {
           eventSourceRef.current?.close()
           break
         case "error":
-          newLog.push(`> ❌ ERROR: ${data.message}`)
+          newLog.push(`> ❌ SERVER ERROR: ${data.message}`)
           isStreaming = false
           eventSourceRef.current?.close()
           break
       }
 
-      return { ...prevState, battleLog: newLog, agents: newAgents, isStreaming, winner: newWinner, reason: newReason }
+      return {
+        ...prevState,
+        battleLog: newLog,
+        agents: newAgents,
+        isStreaming,
+        winner: newWinner,
+        reason: newReason,
+        currentAgent,
+        turn,
+      }
     })
   }
 
   const startBattle = async () => {
     if (battleState.isStreaming) return
 
-    setBattleState(initialBattleState)
+    setBattleState({ ...initialBattleState, battleLog: ["> Initializing..."] })
 
     const gameId = `battle-${Date.now()}`
 
     try {
-      // Step 1: Start the game on the server
+      // Step 1: Health check to verify server is reachable and CORS is OK.
+      setBattleState((prev) => ({ ...prev, battleLog: [`> Pinging server at ${serverURL}...`] }))
+      const healthCheckResponse = await fetch(serverURL)
+      if (!healthCheckResponse.ok) {
+        throw new Error(`Server health check failed with status: ${healthCheckResponse.status}`)
+      }
+      const serverInfo = await healthCheckResponse.json()
+      console.log("Server info:", serverInfo)
+      setBattleState((prev) => ({ ...prev, battleLog: [...prev.battleLog, `> Server online: ${serverInfo.message}`] }))
+
+      // Step 2: Start the game.
+      setBattleState((prev) => ({ ...prev, battleLog: [...prev.battleLog, `> Starting game ${gameId}...`] }))
       const startResponse = await fetch(`${serverURL}/start-game`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -241,38 +257,52 @@ export default function PromptArena() {
       })
 
       if (!startResponse.ok) {
-        throw new Error("Failed to start game on server.")
+        const errorData = await startResponse.json().catch(() => ({ detail: "Unknown server error." }))
+        throw new Error(errorData.detail || "Failed to start game on server.")
       }
 
+      // Step 3: Connect to the streaming endpoint.
       setBattleState((prev) => ({
         ...prev,
         isActive: true,
         isStreaming: true,
-        battleLog: [`> Connecting to game ${gameId}...`],
+        battleLog: [`> Game started. Connecting to event stream...`],
       }))
 
-      // Step 2: Connect to the streaming endpoint
       const es = new EventSource(`${serverURL}/stream-game/${gameId}`)
       eventSourceRef.current = es
 
       es.onmessage = handleStreamEvent
       es.onerror = (err) => {
-        console.error("EventSource failed:", err)
+        console.error("EventSource connection error:", err)
         setBattleState((prev) => ({
           ...prev,
           isStreaming: false,
-          battleLog: [...prev.battleLog, "> ❌ Connection to server lost."],
+          winner: prev.winner || "Error",
+          reason: prev.reason || "Stream Disconnected",
+          battleLog: [
+            ...prev.battleLog,
+            "\n--- CONNECTION LOST ---",
+            "> ❌ Lost connection to the battle server.",
+            "> The stream was interrupted. Please restart the battle.",
+          ],
         }))
         es.close()
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to start battle:", error)
       setBattleState((prev) => ({
         ...prev,
+        isActive: false,
+        isStreaming: false,
         battleLog: [
-          "> ❌ Could not connect to the battle server.",
-          `> Server URL: ${serverURL}`,
-          "> Ensure the FastAPI server is running and CORS is enabled.",
+          "> ❌ Battle initialization failed.",
+          `> URL: ${serverURL}`,
+          `> Error: ${error.message}`,
+          "> Possible causes:",
+          "> 1. The backend server is down or has an error.",
+          "> 2. A browser extension is blocking the request.",
+          "> 3. The server's CORS policy is misconfigured.",
         ],
       }))
     }
@@ -291,21 +321,22 @@ export default function PromptArena() {
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-6">
           <h1 className="text-4xl font-bold text-white tracking-wider" style={{ textShadow: "2px 2px 0px #000000" }}>
-            MENTAL BATTLE ARENA
+            Agent Battle Arena
           </h1>
-          <p className="text-sm text-gray-400 mt-2">Powered by FastAPI & OpenAI</p>
+          <p className="text-sm text-gray-400 mt-2">Mental Manipulation Battle</p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Left & Right Panels */}
           {[0, 1].map((i) => (
             <Card key={i} className="border border-black bg-[#333333]">
               <CardContent className="p-4">
                 <h3 className="text-white text-sm mb-3">
-                  <Target className="w-4 h-4 inline mr-2" /> AGENT {i} (GPT)
+                  <Target className="w-4 h-4 inline mr-2" /> AGENT {i}
                 </h3>
                 <div className="space-y-2 text-white text-xs">
-                  <div>STATUS: {battleState.isActive ? "FIGHTING" : "IDLE"}</div>
+                  <div>
+                    STATUS: {battleState.isActive ? (battleState.currentAgent === i ? "THINKING" : "WAITING") : "IDLE"}
+                  </div>
                   <div>TRUST: {(battleState.agents[i].mentalState.trust * 100).toFixed(0)}%</div>
                   <div>MEMORY: {(battleState.agents[i].mentalState.memory * 100).toFixed(0)}%</div>
                   <div>BELIEF: {(battleState.agents[i].mentalState.belief * 100).toFixed(0)}%</div>
@@ -314,13 +345,16 @@ export default function PromptArena() {
             </Card>
           ))}
 
-          {/* Center - Battle Visualization & Controls */}
           <Card className="border-2 border-black bg-[#2a2a2a] order-first lg:order-none">
             <CardContent className="p-2">
               <canvas ref={canvasRef} className="w-full border border-black" style={{ imageRendering: "pixelated" }} />
               <div className="flex justify-center gap-4 mt-4">
                 {!battleState.isActive ? (
-                  <Button onClick={startBattle} className="bg-[#9966FF] hover:bg-[#8855EE] text-white">
+                  <Button
+                    onClick={startBattle}
+                    className="bg-[#9966FF] hover:bg-[#8855EE] text-white"
+                    disabled={battleState.isStreaming}
+                  >
                     <Zap className="w-4 h-4 mr-2" /> START BATTLE
                   </Button>
                 ) : (
@@ -340,13 +374,15 @@ export default function PromptArena() {
           </Card>
         </div>
 
-        {/* Battle Log */}
         <Card className="mt-6 border border-black bg-[#2a2a2a]">
           <CardContent className="p-4">
             <h3 className="text-white text-sm mb-4">BATTLE LOG</h3>
-            <div className="p-4 border border-black max-h-60 overflow-y-auto bg-black text-xs text-green-400">
+            <div
+              ref={logContainerRef}
+              className="p-4 border border-black h-60 overflow-y-auto bg-black text-xs text-green-400"
+            >
               {battleState.battleLog.map((log, index) => (
-                <p key={index} className="whitespace-pre-wrap">
+                <p key={index} className="whitespace-pre-wrap leading-relaxed">
                   {log}
                 </p>
               ))}
