@@ -437,7 +437,7 @@ export default function AgentBattleArena() {
     const ctx = canvas.getContext("2d")
     if (!ctx) return
     canvas.width = 800
-    canvas.height = 400
+    canvas.height = 200  // Set to 200
     renderMentalArena(ctx, battleState.agents)
   }
 
@@ -445,9 +445,9 @@ export default function AgentBattleArena() {
     return model.split(':')[0]
   }
 
-  const drawSpeechBubble = (ctx: CanvasRenderingContext2D, x: number, y: number, bubble: SpeechBubble) => {
+  const drawSpeechBubble = (ctx: CanvasRenderingContext2D, x: number, y: number, bubble: SpeechBubble, alignLeft = false) => {
     const padding = 8
-    const maxWidth = 120
+    const maxWidth = 180  // Increased from 120 to 180
     const fontSize = 10
     
     ctx.save()
@@ -478,9 +478,17 @@ export default function AgentBattleArena() {
     const bubbleWidth = Math.min(maxWidth + padding * 2, Math.max(...lines.map(line => ctx.measureText(line).width)) + padding * 2)
     const bubbleHeight = lines.length * lineHeight + padding * 2
     
-    // Bubble position (centered above the logo)
-    const bubbleX = x - bubbleWidth / 2
-    const bubbleY = y - bubbleHeight
+    // Bubble position (adjusted for left/right alignment)
+    // Y coordinate represents the center of the bubble
+    let bubbleX: number
+    if (alignLeft) {
+      // For agent 1 (right side): bubble extends to the left
+      bubbleX = x - bubbleWidth
+    } else {
+      // For agent 0 (left side): bubble extends to the right  
+      bubbleX = x
+    }
+    const bubbleY = y - bubbleHeight / 2  // Center the bubble on the y coordinate
     
     // Determine colors based on bubble type
     let backgroundColor: string
@@ -527,16 +535,33 @@ export default function AgentBattleArena() {
     ctx.lineWidth = 2
     ctx.strokeRect(bubbleX, bubbleY, bubbleWidth, bubbleHeight)
     
-    // Draw pointer (triangle pointing down to logo)
+    // Draw pointer (triangle pointing toward logo at the edge)
     const pointerSize = 6
-    const pointerX = x
-    const pointerY = bubbleY + bubbleHeight
+    let pointerX: number
+    let pointerY: number
     
-    ctx.beginPath()
-    ctx.moveTo(pointerX - pointerSize, pointerY)
-    ctx.lineTo(pointerX + pointerSize, pointerY)
-    ctx.lineTo(pointerX, pointerY + pointerSize)
-    ctx.closePath()
+    if (alignLeft) {
+      // For agent 1: pointer points right toward logo at x=700
+      pointerX = bubbleX + bubbleWidth
+      pointerY = bubbleY + bubbleHeight / 2
+      
+      ctx.beginPath()
+      ctx.moveTo(pointerX, pointerY - pointerSize)
+      ctx.lineTo(pointerX, pointerY + pointerSize)
+      ctx.lineTo(pointerX + pointerSize, pointerY)
+      ctx.closePath()
+    } else {
+      // For agent 0: pointer points left toward logo at x=100
+      pointerX = bubbleX
+      pointerY = bubbleY + bubbleHeight / 2
+      
+      ctx.beginPath()
+      ctx.moveTo(pointerX, pointerY - pointerSize)
+      ctx.lineTo(pointerX, pointerY + pointerSize)
+      ctx.lineTo(pointerX - pointerSize, pointerY)
+      ctx.closePath()
+    }
+    
     ctx.fillStyle = backgroundColor
     ctx.fill()
     ctx.strokeStyle = borderColor
@@ -545,21 +570,22 @@ export default function AgentBattleArena() {
     // Draw text
     ctx.fillStyle = textColor
     ctx.textAlign = 'center'
+    const textX = bubbleX + bubbleWidth / 2
     const textStartY = bubbleY + padding + fontSize
     
     for (let i = 0; i < lines.length; i++) {
-      ctx.fillText(lines[i], x, textStartY + i * lineHeight)
+      ctx.fillText(lines[i], textX, textStartY + i * lineHeight)
     }
     
     ctx.restore()
   }
 
   const renderMentalArena = (ctx: CanvasRenderingContext2D, agents: [AgentState, AgentState]) => {
-    ctx.clearRect(0, 0, 800, 400)
+    ctx.clearRect(0, 0, 800, 200)  // Updated height
 
     // Background
     ctx.fillStyle = "#1e1e1e"
-    ctx.fillRect(0, 0, 800, 400)
+    ctx.fillRect(0, 0, 800, 200)  // Updated height
 
     // Grid pattern
     ctx.strokeStyle = "#333333"
@@ -567,10 +593,10 @@ export default function AgentBattleArena() {
     for (let i = 0; i < 800; i += 50) {
       ctx.beginPath()
       ctx.moveTo(i, 0)
-      ctx.lineTo(i, 400)
+      ctx.lineTo(i, 200)  // Updated height
       ctx.stroke()
     }
-    for (let i = 0; i < 400; i += 50) {
+    for (let i = 0; i < 200; i += 50) {  // Updated height
       ctx.beginPath()
       ctx.moveTo(0, i)
       ctx.lineTo(800, i)
@@ -582,13 +608,13 @@ export default function AgentBattleArena() {
     ctx.lineWidth = 2
     ctx.beginPath()
     ctx.moveTo(400, 0)
-    ctx.lineTo(400, 400)
+    ctx.lineTo(400, 200)  // Updated height
     ctx.stroke()
 
-    // Draw agent logos
+    // Draw agent logos - moved to outer sides
     const agentColors = ["#0066FF", "#FF6600"]
     const agentActive = [battleState.currentAgent === 0, battleState.currentAgent === 1]
-    const basePositions = [{ x: 200, y: 200 }, { x: 600, y: 200 }]
+    const basePositions = [{ x: 100, y: 100 }, { x: 700, y: 100 }]  // Moved to outer sides, centered at y=100
     const logoSize = 80
 
     for (let i = 0; i < 2; i++) {
@@ -683,7 +709,7 @@ export default function AgentBattleArena() {
         ctx.globalAlpha = 1
       }
 
-      // Draw speech bubbles if visible (stacked: tool, result, detection)
+      // Draw speech bubbles if visible (stacked to the side of logos)
       const speechBubbles = battleState.speechBubbles[i]
       const visibleBubbles: SpeechBubble[] = []
       
@@ -692,11 +718,34 @@ export default function AgentBattleArena() {
       if (speechBubbles.result.isVisible) visibleBubbles.push(speechBubbles.result)
       if (speechBubbles.detection.isVisible) visibleBubbles.push(speechBubbles.detection)
       
-      // Draw bubbles from top to bottom
-      let bubbleYOffset = 0
-      for (const bubble of visibleBubbles) {
-        drawSpeechBubble(ctx, baseX, baseY - logoSize/2 - 20 - bubbleYOffset, bubble)
-        bubbleYOffset += 50 // Space between bubbles
+      // Position bubbles to the center of the arena (using full height)
+      // Agent 0 (left side): bubbles in the center-left area
+      // Agent 1 (right side): bubbles in the center-right area
+      const bubbleBaseX = i === 0 ? 250 : 550  // Center-left and center-right positions
+      
+      // Distribute bubbles across the full height (200px)
+      const totalBubbles = visibleBubbles.length
+      if (totalBubbles > 0) {
+        const estimatedBubbleHeight = 35  // Estimated height per bubble
+        const topMargin = estimatedBubbleHeight + 10  // Ensure top bubble fits
+        const bottomMargin = 20
+        const availableHeight = 200 - topMargin - bottomMargin
+        
+        for (let bubbleIndex = 0; bubbleIndex < visibleBubbles.length; bubbleIndex++) {
+          const bubble = visibleBubbles[bubbleIndex]
+          
+          let bubbleY: number
+          if (totalBubbles === 1) {
+            // Single bubble: center it
+            bubbleY = 100
+          } else {
+            // Multiple bubbles: distribute evenly
+            const spacing = availableHeight / (totalBubbles - 1)
+            bubbleY = topMargin + (bubbleIndex * spacing)
+          }
+          
+          drawSpeechBubble(ctx, bubbleBaseX, bubbleY, bubble, i === 1)
+        }
       }
     }
 
