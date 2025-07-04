@@ -28,6 +28,12 @@ interface SpeechBubble {
   toolName?: string
 }
 
+interface AgentSpeechBubbles {
+  tool: SpeechBubble
+  result: SpeechBubble
+  detection: SpeechBubble
+}
+
 interface LogoAnimation {
   x: number
   y: number
@@ -48,7 +54,7 @@ interface BattleState {
   turn: number
   currentAgent: number | null
   logoAnimations: [LogoAnimation, LogoAnimation]
-  speechBubbles: [SpeechBubble, SpeechBubble]
+  speechBubbles: [AgentSpeechBubbles, AgentSpeechBubbles]
 }
 
 const initialAgentState: AgentState = {
@@ -62,6 +68,12 @@ const initialSpeechBubble: SpeechBubble = {
   timestamp: 0,
   type: 'tool',
   toolName: undefined,
+}
+
+const initialAgentSpeechBubbles: AgentSpeechBubbles = {
+  tool: JSON.parse(JSON.stringify(initialSpeechBubble)),
+  result: JSON.parse(JSON.stringify(initialSpeechBubble)),
+  detection: JSON.parse(JSON.stringify(initialSpeechBubble)),
 }
 
 const initialLogoAnimation: LogoAnimation = {
@@ -84,7 +96,7 @@ const initialBattleState: BattleState = {
   turn: 0,
   currentAgent: null,
   logoAnimations: [JSON.parse(JSON.stringify(initialLogoAnimation)), JSON.parse(JSON.stringify(initialLogoAnimation))],
-  speechBubbles: [JSON.parse(JSON.stringify(initialSpeechBubble)), JSON.parse(JSON.stringify(initialSpeechBubble))],
+  speechBubbles: [JSON.parse(JSON.stringify(initialAgentSpeechBubbles)), JSON.parse(JSON.stringify(initialAgentSpeechBubbles))],
 }
 
 // --- Mental State Bar Component ---
@@ -234,15 +246,28 @@ export default function AgentBattleArena() {
   const showSpeechBubble = (agentIndex: number, message: string, type: SpeechBubble['type'], toolName?: string) => {
     console.log(`Showing speech bubble for agent ${agentIndex}: ${message} (${type})`)
     const timestamp = Date.now()
+    
     setBattleState(prev => {
-      const newBubbles = [...prev.speechBubbles] as [SpeechBubble, SpeechBubble]
-      newBubbles[agentIndex] = {
+      const newBubbles = [...prev.speechBubbles] as [AgentSpeechBubbles, AgentSpeechBubbles]
+      
+      // Determine which bubble slot to use based on type
+      let bubbleSlot: keyof AgentSpeechBubbles
+      if (type === 'tool') {
+        bubbleSlot = 'tool'
+      } else if (type === 'detection') {
+        bubbleSlot = 'detection'
+      } else {
+        bubbleSlot = 'result' // success or failure
+      }
+      
+      newBubbles[agentIndex][bubbleSlot] = {
         message,
         isVisible: true,
         timestamp,
         type,
         toolName,
       }
+      
       return {
         ...prev,
         speechBubbles: newBubbles
@@ -252,10 +277,16 @@ export default function AgentBattleArena() {
     // Auto-hide after 3 seconds
     setTimeout(() => {
       setBattleState(prev => {
-        const newBubbles = [...prev.speechBubbles] as [SpeechBubble, SpeechBubble]
-        if (newBubbles[agentIndex].timestamp === timestamp) {
-          newBubbles[agentIndex].isVisible = false
-        }
+        const newBubbles = [...prev.speechBubbles] as [AgentSpeechBubbles, AgentSpeechBubbles]
+        
+        // Find and hide the bubble with matching timestamp
+        Object.keys(newBubbles[agentIndex]).forEach(key => {
+          const bubbleKey = key as keyof AgentSpeechBubbles
+          if (newBubbles[agentIndex][bubbleKey].timestamp === timestamp) {
+            newBubbles[agentIndex][bubbleKey].isVisible = false
+          }
+        })
+        
         return {
           ...prev,
           speechBubbles: newBubbles
@@ -652,10 +683,20 @@ export default function AgentBattleArena() {
         ctx.globalAlpha = 1
       }
 
-      // Draw speech bubble if visible
-      const speechBubble = battleState.speechBubbles[i]
-      if (speechBubble.isVisible) {
-        drawSpeechBubble(ctx, baseX, baseY - logoSize/2 - 20, speechBubble)
+      // Draw speech bubbles if visible (stacked: tool, result, detection)
+      const speechBubbles = battleState.speechBubbles[i]
+      const visibleBubbles: SpeechBubble[] = []
+      
+      // Add bubbles to stack in order: tool (top), result (middle), detection (bottom)
+      if (speechBubbles.tool.isVisible) visibleBubbles.push(speechBubbles.tool)
+      if (speechBubbles.result.isVisible) visibleBubbles.push(speechBubbles.result)
+      if (speechBubbles.detection.isVisible) visibleBubbles.push(speechBubbles.detection)
+      
+      // Draw bubbles from top to bottom
+      let bubbleYOffset = 0
+      for (const bubble of visibleBubbles) {
+        drawSpeechBubble(ctx, baseX, baseY - logoSize/2 - 20 - bubbleYOffset, bubble)
+        bubbleYOffset += 50 // Space between bubbles
       }
     }
 
@@ -820,7 +861,7 @@ export default function AgentBattleArena() {
       ...initialBattleState,
       battleLog: ["> Initializing..."],
       logoAnimations: [JSON.parse(JSON.stringify(initialLogoAnimation)), JSON.parse(JSON.stringify(initialLogoAnimation))],
-      speechBubbles: [JSON.parse(JSON.stringify(initialSpeechBubble)), JSON.parse(JSON.stringify(initialSpeechBubble))]
+      speechBubbles: [JSON.parse(JSON.stringify(initialAgentSpeechBubbles)), JSON.parse(JSON.stringify(initialAgentSpeechBubbles))]
     })
     setShowConfig(false)
 
@@ -909,7 +950,7 @@ export default function AgentBattleArena() {
     setBattleState({
       ...initialBattleState,
       logoAnimations: [JSON.parse(JSON.stringify(initialLogoAnimation)), JSON.parse(JSON.stringify(initialLogoAnimation))],
-      speechBubbles: [JSON.parse(JSON.stringify(initialSpeechBubble)), JSON.parse(JSON.stringify(initialSpeechBubble))]
+      speechBubbles: [JSON.parse(JSON.stringify(initialAgentSpeechBubbles)), JSON.parse(JSON.stringify(initialAgentSpeechBubbles))]
     })
     setShowConfig(true)
   }
@@ -1083,6 +1124,79 @@ export default function AgentBattleArena() {
           </Card>
         )}
 
+        {/* Battle Controls */}
+        <div className="flex justify-center gap-4 mt-6 mb-6">
+          {!battleState.isActive ? (
+              <Button
+                  onClick={startBattle}
+                  className="bg-[#9966FF] hover:bg-[#8855EE] text-white disabled:bg-gray-600"
+                  disabled={
+                      battleState.isStreaming ||
+                      !selectedPlayer1Model ||
+                      !selectedPlayer2Model ||
+                      getRequiredApiKeys().some(provider => !apiKeys[provider]?.trim()) ||
+                      maxTurns < 1 ||
+                      maxTurns > 20
+                  }
+              >
+                <Zap className="w-4 h-4 mr-2" /> START BATTLE
+              </Button>
+          ) : (
+              <Button onClick={restartBattle} variant="destructive">
+                RESTART
+              </Button>
+          )}
+
+          {/* Test Animation Button */}
+          <Button
+              onClick={() => {
+                console.log('Testing animation and stacked speech bubbles manually...')
+                // Agent 0: Show all three bubble types in sequence
+                startLogoAnimation(0)
+                showSpeechBubble(0, 'Using prompt_manipulation', 'tool', 'prompt_manipulation')
+                setTimeout(() => {
+                  showSpeechBubble(0, 'Success!', 'success')
+                }, 500)
+                setTimeout(() => {
+                  showSpeechBubble(0, 'Detected!', 'detection')
+                }, 1000)
+
+                // Agent 1: Show different combination
+                setTimeout(() => {
+                  startLogoAnimation(1)
+                  showSpeechBubble(1, 'Using memory_alteration', 'tool', 'memory_alteration')
+                  setTimeout(() => {
+                    showSpeechBubble(1, 'Failed!', 'failure')
+                  }, 800)
+                }, 2000)
+              }}
+              variant="outline"
+              className="border-gray-600 text-gray-300 hover:bg-gray-700"
+          >
+            TEST STACK
+          </Button>
+
+          {showConfig && (
+              <Button
+                  onClick={() => setShowConfig(false)}
+                  variant="outline"
+                  className="border-gray-600 text-gray-300 hover:bg-gray-700"
+              >
+                HIDE CONFIG
+              </Button>
+          )}
+
+          {!showConfig && !battleState.isActive && (
+              <Button
+                  onClick={() => setShowConfig(true)}
+                  variant="outline"
+                  className="border-gray-600 text-gray-300 hover:bg-gray-700"
+              >
+                <Settings className="w-4 h-4 mr-2" /> CONFIG
+              </Button>
+          )}
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
           {[0, 1].map((i) => {
             const playerModel = i === 0 ? selectedPlayer1Model : selectedPlayer2Model
@@ -1169,70 +1283,6 @@ export default function AgentBattleArena() {
             )}
           </CardContent>
         </Card>
-
-        {/* Battle Controls */}
-        <div className="flex justify-center gap-4 mt-6">
-        {!battleState.isActive ? (
-        <Button
-        onClick={startBattle}
-        className="bg-[#9966FF] hover:bg-[#8855EE] text-white disabled:bg-gray-600"
-        disabled={
-        battleState.isStreaming || 
-        !selectedPlayer1Model || 
-        !selectedPlayer2Model || 
-        getRequiredApiKeys().some(provider => !apiKeys[provider]?.trim()) || 
-        maxTurns < 1 || 
-        maxTurns > 20
-        }
-        >
-        <Zap className="w-4 h-4 mr-2" /> START BATTLE
-        </Button>
-        ) : (
-        <Button onClick={restartBattle} variant="destructive">
-        RESTART
-        </Button>
-        )}
-
-          {/* Test Animation Button */}
-          <Button
-            onClick={() => {
-              console.log('Testing animation and speech bubbles manually...')
-              startLogoAnimation(0)
-              showSpeechBubble(0, 'Using prompt_manipulation', 'tool', 'prompt_manipulation')
-              setTimeout(() => {
-                startLogoAnimation(1)
-                showSpeechBubble(1, 'Success!', 'success')
-              }, 1000)
-              setTimeout(() => {
-                showSpeechBubble(0, 'Detected!', 'detection')
-              }, 2000)
-            }}
-            variant="outline"
-            className="border-gray-600 text-gray-300 hover:bg-gray-700"
-          >
-            TEST ANIM
-          </Button>
-
-          {showConfig && (
-            <Button
-              onClick={() => setShowConfig(false)}
-              variant="outline"
-              className="border-gray-600 text-gray-300 hover:bg-gray-700"
-            >
-              HIDE CONFIG
-            </Button>
-          )}
-
-          {!showConfig && !battleState.isActive && (
-            <Button
-              onClick={() => setShowConfig(true)}
-              variant="outline"
-              className="border-gray-600 text-gray-300 hover:bg-gray-700"
-            >
-              <Settings className="w-4 h-4 mr-2" /> CONFIG
-            </Button>
-          )}
-        </div>
 
         <Card className="mt-6 border border-black bg-[#2a2a2a]">
           <CardContent className="p-4">
