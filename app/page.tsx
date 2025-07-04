@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Target, Zap, Settings } from "lucide-react"
+import { Target, Zap, Settings, Volume2, VolumeX } from "lucide-react"
 
 // --- State Interfaces ---
 interface MentalState {
@@ -42,6 +42,13 @@ interface LogoAnimation {
   isAnimating: boolean
   animationType: string
   animationProgress: number
+}
+
+interface AudioState {
+  isEnabled: boolean
+  volume: number
+  audioContext: AudioContext | null
+  sounds: Record<string, AudioBuffer | null>
 }
 
 interface BattleState {
@@ -84,6 +91,18 @@ const initialLogoAnimation: LogoAnimation = {
   isAnimating: false,
   animationType: 'idle',
   animationProgress: 0,
+}
+
+const initialAudioState: AudioState = {
+  isEnabled: true,
+  volume: 0.5,
+  audioContext: null,
+  sounds: {
+    'tool-use': null,
+    'success': null,
+    'failure': null,
+    'detection': null,
+  },
 }
 
 const initialBattleState: BattleState = {
@@ -133,6 +152,7 @@ export default function AgentBattleArena() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const [battleState, setBattleState] = useState<BattleState>(initialBattleState)
+  const [audioState, setAudioState] = useState<AudioState>(initialAudioState)
   const logContainerRef = useRef<HTMLDivElement>(null)
   const logoImagesRef = useRef<Record<string, HTMLImageElement>>({})
   const animationFrameRef = useRef<number | null>(null)
@@ -169,12 +189,119 @@ export default function AgentBattleArena() {
     }
   })
 
+  // Audio System Functions
+  const initializeAudioContext = useCallback(async () => {
+    if (!audioState.audioContext) {
+      try {
+        const context = new (window.AudioContext || (window as any).webkitAudioContext)()
+        setAudioState(prev => ({ ...prev, audioContext: context }))
+        console.log('Audio context initialized')
+        return context
+      } catch (error) {
+        console.warn('Failed to initialize audio context:', error)
+        return null
+      }
+    }
+    return audioState.audioContext
+  }, [audioState.audioContext])
+
+  const loadSound = useCallback(async (soundName: string, url: string, context: AudioContext): Promise<AudioBuffer | null> => {
+    try {
+      console.log(`Loading sound: ${soundName} from ${url}`)
+      const response = await fetch(url)
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+      const arrayBuffer = await response.arrayBuffer()
+      const audioBuffer = await context.decodeAudioData(arrayBuffer)
+      console.log(`Sound loaded successfully: ${soundName}`)
+      return audioBuffer
+    } catch (error) {
+      console.warn(`Failed to load sound ${soundName}:`, error)
+      return null
+    }
+  }, [])
+
+  const loadAllSounds = useCallback(async () => {
+    const context = await initializeAudioContext()
+    if (!context) return
+
+    const soundFiles = {
+      'tool-use': '/sounds/tool-use.wav',
+      'success': '/sounds/success.wav', 
+      'failure': '/sounds/failure.wav',
+      'detection': '/sounds/detection.wav',
+    }
+
+    console.log('Loading all sound files...')
+    const loadPromises = Object.entries(soundFiles).map(async ([name, url]) => {
+      const buffer = await loadSound(name, url, context)
+      return { name, buffer }
+    })
+
+    const results = await Promise.all(loadPromises)
+    const newSounds: Record<string, AudioBuffer | null> = {}
+    results.forEach(({ name, buffer }) => {
+      newSounds[name] = buffer
+    })
+
+    setAudioState(prev => ({
+      ...prev,
+      sounds: newSounds
+    }))
+    
+    console.log('Sound loading complete:', Object.keys(newSounds).filter(key => newSounds[key] !== null))
+  }, [initializeAudioContext, loadSound])
+
+  const playSound = useCallback((soundName: string) => {
+    if (!audioState.isEnabled || !audioState.audioContext || !audioState.sounds[soundName]) {
+      if (!audioState.isEnabled) {
+        console.log(`Audio disabled, skipping sound: ${soundName}`)
+      } else if (!audioState.audioContext) {
+        console.warn(`No audio context available for sound: ${soundName}`)
+      } else {
+        console.warn(`Sound not loaded: ${soundName}`)
+      }
+      return
+    }
+
+    try {
+      const source = audioState.audioContext.createBufferSource()
+      const gainNode = audioState.audioContext.createGain()
+      
+      source.buffer = audioState.sounds[soundName]
+      gainNode.gain.value = audioState.volume
+      
+      source.connect(gainNode)
+      gainNode.connect(audioState.audioContext.destination)
+      
+      source.start(0)
+      console.log(`Playing sound: ${soundName} at volume ${audioState.volume}`)
+    } catch (error) {
+      console.error(`Failed to play sound ${soundName}:`, error)
+    }
+  }, [audioState])
+
+  const toggleAudio = useCallback(() => {
+    setAudioState(prev => ({ ...prev, isEnabled: !prev.isEnabled }))
+  }, [])
+
+  const setVolume = useCallback((volume: number) => {
+    const clampedVolume = Math.max(0, Math.min(1, volume))
+    setAudioState(prev => ({ ...prev, volume: clampedVolume }))
+  }, [])
+
   // Auto-scroll battle log
   useEffect(() => {
     if (logContainerRef.current) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight
     }
   }, [battleState.battleLog])
+
+  // Initialize audio on component mount
+  useEffect(() => {
+    loadAllSounds()
+  }, [loadAllSounds])
 
   // Load provider logos
   useEffect(() => {
@@ -242,10 +369,26 @@ export default function AgentBattleArena() {
     setApiKeys(prev => ({ ...prev, [provider]: value }))
   }
 
-  // Speech bubble functions
+  // Speech bubble functions with audio
   const showSpeechBubble = (agentIndex: number, message: string, type: SpeechBubble['type'], toolName?: string) => {
     console.log(`Showing speech bubble for agent ${agentIndex}: ${message} (${type})`)
     const timestamp = Date.now()
+    
+    // Play appropriate sound based on type
+    switch (type) {
+      case 'tool':
+        playSound('tool-use')
+        break
+      case 'success':
+        playSound('success')
+        break
+      case 'failure':
+        playSound('failure')
+        break
+      case 'detection':
+        playSound('detection')
+        break
+    }
     
     setBattleState(prev => {
       const newBubbles = [...prev.speechBubbles] as [AgentSpeechBubbles, AgentSpeechBubbles]
@@ -1009,6 +1152,28 @@ export default function AgentBattleArena() {
       className="pixel-ui min-h-screen p-4 bg-[#1e1e1e] text-white"
       style={{ fontFamily: "'Press Start 2P', monospace" }}
     >
+      <style jsx>{`
+        /* Custom range slider styling */
+        input[type="range"]::-webkit-slider-thumb {
+          appearance: none;
+          height: 16px;
+          width: 16px;
+          border-radius: 50%;
+          background: #9966FF;
+          cursor: pointer;
+          border: 2px solid #ffffff;
+          box-shadow: 0 0 2px rgba(0,0,0,0.3);
+        }
+        input[type="range"]::-moz-range-thumb {
+          height: 16px;
+          width: 16px;
+          border-radius: 50%;
+          background: #9966FF;
+          cursor: pointer;
+          border: 2px solid #ffffff;
+          box-shadow: 0 0 2px rgba(0,0,0,0.3);
+        }
+      `}</style>
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-6">
           <h1 className="text-4xl font-bold text-white tracking-wider" style={{ textShadow: "2px 2px 0px #000000" }}>
@@ -1195,6 +1360,56 @@ export default function AgentBattleArena() {
                 RESTART
               </Button>
           )}
+
+          {/* Audio Controls */}
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={toggleAudio}
+              variant="outline"
+              size="sm"
+              className="border-gray-600 text-gray-300 hover:bg-gray-700"
+            >
+              {audioState.isEnabled ? (
+                <Volume2 className="w-4 h-4" />
+              ) : (
+                <VolumeX className="w-4 h-4" />
+              )}
+            </Button>
+            {audioState.isEnabled && (
+              <div className="flex items-center gap-2 min-w-[100px]">
+                <span className="text-xs text-gray-400">VOL</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  value={audioState.volume}
+                  onChange={(e) => setVolume(parseFloat(e.target.value))}
+                  className="w-16 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                  style={{
+                    background: `linear-gradient(to right, #9966FF 0%, #9966FF ${audioState.volume * 100}%, #374151 ${audioState.volume * 100}%, #374151 100%)`
+                  }}
+                />
+                <span className="text-xs text-gray-400 w-8">{Math.round(audioState.volume * 100)}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Test Sound Button */}
+          <Button
+            onClick={() => {
+              console.log('Testing all sounds...')
+              playSound('tool-use')
+              setTimeout(() => playSound('success'), 300)
+              setTimeout(() => playSound('failure'), 600)
+              setTimeout(() => playSound('detection'), 900)
+            }}
+            variant="outline"
+            size="sm"
+            className="border-gray-600 text-gray-300 hover:bg-gray-700"
+          >
+            TEST SOUNDS
+          </Button>
 
           {/* Test Animation Button */}
           <Button
