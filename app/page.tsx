@@ -171,12 +171,16 @@ export default function AgentBattleArena() {
           }
           break
         case "tool_execution":
-          newLog.push(formatLog(`uses TOOL: ${data.tool_name}`))
+          if (data.tool_name) {
+            newLog.push(formatLog(`uses TOOL: ${data.tool_name}`))
+          }
           break
         case "tool_result":
-          newLog.push(`> TOOL RESULT: ${data.result.message}`)
-          if (data.result.detection) {
-            newLog.push(`> DETECTION! Opponent noticed the manipulation.`)
+          if (data.result && data.result.message) {
+            newLog.push(`> TOOL RESULT: ${data.result.message}`)
+            if (data.result.detection) {
+              newLog.push(`> DETECTION! Opponent noticed the manipulation.`)
+            }
           }
           break
         case "game_state_update":
