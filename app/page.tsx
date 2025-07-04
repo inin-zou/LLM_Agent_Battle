@@ -146,7 +146,7 @@ const MentalStateBar = ({ label, value, color }: { label: string; value: number;
 )
 
 // Use localhost for development
-const serverURL = "https://isolated-beth-filipp-4ded91ea.koyeb.app/"
+const serverURL = "https://isolated-beth-filipp-4ded91ea.koyeb.app"
 
 export default function AgentBattleArena() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
