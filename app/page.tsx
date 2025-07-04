@@ -20,6 +20,14 @@ interface AgentState {
   beliefs: string[]
 }
 
+interface SpeechBubble {
+  message: string
+  isVisible: boolean
+  timestamp: number
+  type: 'tool' | 'success' | 'failure' | 'detection'
+  toolName?: string
+}
+
 interface LogoAnimation {
   x: number
   y: number
@@ -40,11 +48,20 @@ interface BattleState {
   turn: number
   currentAgent: number | null
   logoAnimations: [LogoAnimation, LogoAnimation]
+  speechBubbles: [SpeechBubble, SpeechBubble]
 }
 
 const initialAgentState: AgentState = {
   mentalState: { trust: 1, memory: 1, belief: 1 },
   beliefs: [],
+}
+
+const initialSpeechBubble: SpeechBubble = {
+  message: '',
+  isVisible: false,
+  timestamp: 0,
+  type: 'tool',
+  toolName: undefined,
 }
 
 const initialLogoAnimation: LogoAnimation = {
@@ -67,6 +84,7 @@ const initialBattleState: BattleState = {
   turn: 0,
   currentAgent: null,
   logoAnimations: [JSON.parse(JSON.stringify(initialLogoAnimation)), JSON.parse(JSON.stringify(initialLogoAnimation))],
+  speechBubbles: [JSON.parse(JSON.stringify(initialSpeechBubble)), JSON.parse(JSON.stringify(initialSpeechBubble))],
 }
 
 // --- Mental State Bar Component ---
@@ -212,6 +230,40 @@ export default function AgentBattleArena() {
     setApiKeys(prev => ({ ...prev, [provider]: value }))
   }
 
+  // Speech bubble functions
+  const showSpeechBubble = (agentIndex: number, message: string, type: SpeechBubble['type'], toolName?: string) => {
+    console.log(`Showing speech bubble for agent ${agentIndex}: ${message} (${type})`)
+    const timestamp = Date.now()
+    setBattleState(prev => {
+      const newBubbles = [...prev.speechBubbles] as [SpeechBubble, SpeechBubble]
+      newBubbles[agentIndex] = {
+        message,
+        isVisible: true,
+        timestamp,
+        type,
+        toolName,
+      }
+      return {
+        ...prev,
+        speechBubbles: newBubbles
+      }
+    })
+    
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+      setBattleState(prev => {
+        const newBubbles = [...prev.speechBubbles] as [SpeechBubble, SpeechBubble]
+        if (newBubbles[agentIndex].timestamp === timestamp) {
+          newBubbles[agentIndex].isVisible = false
+        }
+        return {
+          ...prev,
+          speechBubbles: newBubbles
+        }
+      })
+    }, 3000)
+  }
+
   // Animation logic - simplified without complex refs
   const startLogoAnimation = (agentIndex: number) => {
     console.log(`Starting animation for agent ${agentIndex}`)
@@ -339,7 +391,7 @@ export default function AgentBattleArena() {
   useEffect(() => {
     console.log('Rendering canvas due to state change')
     renderCanvas()
-  }, [battleState.agents, battleState.currentAgent, battleState.isActive, selectedPlayer1Model, selectedPlayer2Model, battleState.logoAnimations])
+  }, [battleState.agents, battleState.currentAgent, battleState.isActive, selectedPlayer1Model, selectedPlayer2Model, battleState.logoAnimations, battleState.speechBubbles])
 
   // Cleanup EventSource on component unmount
   useEffect(() => {
@@ -360,6 +412,115 @@ export default function AgentBattleArena() {
 
   const getProviderFromModel = (model: string): string => {
     return model.split(':')[0]
+  }
+
+  const drawSpeechBubble = (ctx: CanvasRenderingContext2D, x: number, y: number, bubble: SpeechBubble) => {
+    const padding = 8
+    const maxWidth = 120
+    const fontSize = 10
+    
+    ctx.save()
+    
+    // Set font for measuring text
+    ctx.font = `${fontSize}px 'Press Start 2P', monospace`
+    ctx.textAlign = 'center'
+    
+    // Measure text and wrap if needed
+    const words = bubble.message.split(' ')
+    const lines: string[] = []
+    let currentLine = ''
+    
+    for (const word of words) {
+      const testLine = currentLine + (currentLine ? ' ' : '') + word
+      const metrics = ctx.measureText(testLine)
+      if (metrics.width > maxWidth && currentLine) {
+        lines.push(currentLine)
+        currentLine = word
+      } else {
+        currentLine = testLine
+      }
+    }
+    if (currentLine) lines.push(currentLine)
+    
+    // Calculate bubble dimensions
+    const lineHeight = fontSize + 2
+    const bubbleWidth = Math.min(maxWidth + padding * 2, Math.max(...lines.map(line => ctx.measureText(line).width)) + padding * 2)
+    const bubbleHeight = lines.length * lineHeight + padding * 2
+    
+    // Bubble position (centered above the logo)
+    const bubbleX = x - bubbleWidth / 2
+    const bubbleY = y - bubbleHeight
+    
+    // Determine colors based on bubble type
+    let backgroundColor: string
+    let borderColor: string
+    let textColor: string
+    
+    switch (bubble.type) {
+      case 'tool':
+        backgroundColor = '#2563EB' // Blue
+        borderColor = '#1D4ED8'
+        textColor = '#FFFFFF'
+        break
+      case 'success':
+        backgroundColor = '#16A34A' // Green
+        borderColor = '#15803D'
+        textColor = '#FFFFFF'
+        break
+      case 'failure':
+        backgroundColor = '#DC2626' // Red
+        borderColor = '#B91C1C'
+        textColor = '#FFFFFF'
+        break
+      case 'detection':
+        backgroundColor = '#F59E0B' // Yellow/Orange
+        borderColor = '#D97706'
+        textColor = '#000000'
+        break
+      default:
+        backgroundColor = '#6B7280' // Gray
+        borderColor = '#4B5563'
+        textColor = '#FFFFFF'
+    }
+    
+    // Draw bubble shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'
+    ctx.fillRect(bubbleX + 2, bubbleY + 2, bubbleWidth, bubbleHeight)
+    
+    // Draw bubble background
+    ctx.fillStyle = backgroundColor
+    ctx.fillRect(bubbleX, bubbleY, bubbleWidth, bubbleHeight)
+    
+    // Draw bubble border
+    ctx.strokeStyle = borderColor
+    ctx.lineWidth = 2
+    ctx.strokeRect(bubbleX, bubbleY, bubbleWidth, bubbleHeight)
+    
+    // Draw pointer (triangle pointing down to logo)
+    const pointerSize = 6
+    const pointerX = x
+    const pointerY = bubbleY + bubbleHeight
+    
+    ctx.beginPath()
+    ctx.moveTo(pointerX - pointerSize, pointerY)
+    ctx.lineTo(pointerX + pointerSize, pointerY)
+    ctx.lineTo(pointerX, pointerY + pointerSize)
+    ctx.closePath()
+    ctx.fillStyle = backgroundColor
+    ctx.fill()
+    ctx.strokeStyle = borderColor
+    ctx.stroke()
+    
+    // Draw text
+    ctx.fillStyle = textColor
+    ctx.textAlign = 'center'
+    const textStartY = bubbleY + padding + fontSize
+    
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], x, textStartY + i * lineHeight)
+    }
+    
+    ctx.restore()
   }
 
   const renderMentalArena = (ctx: CanvasRenderingContext2D, agents: [AgentState, AgentState]) => {
@@ -490,6 +651,12 @@ export default function AgentBattleArena() {
         ctx.fill()
         ctx.globalAlpha = 1
       }
+
+      // Draw speech bubble if visible
+      const speechBubble = battleState.speechBubbles[i]
+      if (speechBubble.isVisible) {
+        drawSpeechBubble(ctx, baseX, baseY - logoSize/2 - 20, speechBubble)
+      }
     }
 
     // Reset text alignment
@@ -521,6 +688,10 @@ export default function AgentBattleArena() {
           currentAgent = data.agent
           turn = data.turn
           newLog.push(`\n--- TURN ${turn} (AGENT ${currentAgent}) ---`)
+          // Trigger animation for every turn start
+          if (currentAgent !== null) {
+            setTimeout(() => startLogoAnimation(currentAgent), 100)
+          }
           break
         case "agent_thinking":
           newLog.push(formatLog("Thinking..."))
@@ -534,15 +705,40 @@ export default function AgentBattleArena() {
           }
           break
         case "tool_execution":
-          if (data.tool_name) {
+          if (data.tool_name && currentAgent !== null) {
             newLog.push(formatLog(`uses TOOL: ${data.tool_name}`))
+            // Show speech bubble for tool usage
+            setTimeout(() => {
+              showSpeechBubble(currentAgent, `Using ${data.tool_name}`, 'tool', data.tool_name)
+            }, 200)
           }
           break
         case "tool_result":
-          if (data.result && data.result.message) {
+          if (data.result && data.result.message && currentAgent !== null) {
             newLog.push(`> TOOL RESULT: ${data.result.message}`)
+            
+            // Determine bubble type and message based on result
+            let bubbleType: SpeechBubble['type'] = 'success'
+            let bubbleMessage = ''
+            
+            if (data.result.success === false) {
+              bubbleType = 'failure'
+              bubbleMessage = 'Failed!'
+            } else if (data.result.success === true) {
+              bubbleType = 'success'
+              bubbleMessage = 'Success!'
+            }
+            
+            // Show detection bubble if detected
             if (data.result.detection) {
               newLog.push(`> DETECTION! Opponent noticed the manipulation.`)
+              setTimeout(() => {
+                showSpeechBubble(currentAgent, 'Detected!', 'detection')
+              }, 500)
+            } else if (bubbleMessage) {
+              setTimeout(() => {
+                showSpeechBubble(currentAgent, bubbleMessage, bubbleType)
+              }, 300)
             }
           }
           break
@@ -623,7 +819,8 @@ export default function AgentBattleArena() {
     setBattleState({
       ...initialBattleState,
       battleLog: ["> Initializing..."],
-      logoAnimations: [JSON.parse(JSON.stringify(initialLogoAnimation)), JSON.parse(JSON.stringify(initialLogoAnimation))]
+      logoAnimations: [JSON.parse(JSON.stringify(initialLogoAnimation)), JSON.parse(JSON.stringify(initialLogoAnimation))],
+      speechBubbles: [JSON.parse(JSON.stringify(initialSpeechBubble)), JSON.parse(JSON.stringify(initialSpeechBubble))]
     })
     setShowConfig(false)
 
@@ -711,7 +908,8 @@ export default function AgentBattleArena() {
     eventSourceRef.current?.close()
     setBattleState({
       ...initialBattleState,
-      logoAnimations: [JSON.parse(JSON.stringify(initialLogoAnimation)), JSON.parse(JSON.stringify(initialLogoAnimation))]
+      logoAnimations: [JSON.parse(JSON.stringify(initialLogoAnimation)), JSON.parse(JSON.stringify(initialLogoAnimation))],
+      speechBubbles: [JSON.parse(JSON.stringify(initialSpeechBubble)), JSON.parse(JSON.stringify(initialSpeechBubble))]
     })
     setShowConfig(true)
   }
@@ -998,9 +1196,16 @@ export default function AgentBattleArena() {
           {/* Test Animation Button */}
           <Button
             onClick={() => {
-              console.log('Testing animation manually...')
+              console.log('Testing animation and speech bubbles manually...')
               startLogoAnimation(0)
-              setTimeout(() => startLogoAnimation(1), 1000)
+              showSpeechBubble(0, 'Using prompt_manipulation', 'tool', 'prompt_manipulation')
+              setTimeout(() => {
+                startLogoAnimation(1)
+                showSpeechBubble(1, 'Success!', 'success')
+              }, 1000)
+              setTimeout(() => {
+                showSpeechBubble(0, 'Detected!', 'detection')
+              }, 2000)
             }}
             variant="outline"
             className="border-gray-600 text-gray-300 hover:bg-gray-700"
