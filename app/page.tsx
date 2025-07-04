@@ -3,7 +3,9 @@
 import { useState, useEffect, useRef } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Target, Zap } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Target, Zap, Settings } from "lucide-react"
 
 // --- State Interfaces ---
 interface MentalState {
@@ -44,6 +46,33 @@ const initialBattleState: BattleState = {
   currentAgent: null,
 }
 
+// --- Mental State Bar Component ---
+const MentalStateBar = ({ label, value, color }: { label: string; value: number; color: string }) => (
+  <div className="mb-2">
+    <div className="flex justify-between text-[10px] mb-1 text-white">
+      <span>{label}</span>
+      <span>{(value * 100).toFixed(0)}%</span>
+    </div>
+    <div className="w-full bg-gray-800 h-3 border-2 border-gray-600 relative overflow-hidden">
+      <div 
+        className="h-full transition-all duration-500 ease-out" 
+        style={{ 
+          width: `${value * 100}%`, 
+          backgroundColor: color,
+          boxShadow: `inset 0 1px 0 rgba(255,255,255,0.3), inset 0 -1px 0 rgba(0,0,0,0.3)` 
+        }}
+      />
+      {/* Pixelated overlay effect */}
+      <div className="absolute inset-0 opacity-20"
+           style={{
+             backgroundImage: `linear-gradient(90deg, transparent 50%, rgba(255,255,255,0.1) 50%)`,
+             backgroundSize: '4px 4px'
+           }}
+      />
+    </div>
+  </div>
+)
+
 // Use the confirmed API URL
 const serverURL = "https://isolated-beth-filipp-4ded91ea.koyeb.app"
 
@@ -52,6 +81,11 @@ export default function AgentBattleArena() {
   const eventSourceRef = useRef<EventSource | null>(null)
   const [battleState, setBattleState] = useState<BattleState>(initialBattleState)
   const logContainerRef = useRef<HTMLDivElement>(null)
+  
+  // Game configuration state
+  const [maxTurns, setMaxTurns] = useState<number>(5)
+  const [apiKey, setApiKey] = useState<string>("")
+  const [showConfig, setShowConfig] = useState<boolean>(true)
 
   // Auto-scroll battle log
   useEffect(() => {
@@ -63,7 +97,7 @@ export default function AgentBattleArena() {
   // Render canvas whenever battle state changes
   useEffect(() => {
     renderCanvas()
-  }, [battleState.agents])
+  }, [battleState.agents, battleState.currentAgent, battleState.isActive])
 
   // Cleanup EventSource on component unmount
   useEffect(() => {
@@ -107,30 +141,39 @@ export default function AgentBattleArena() {
     ctx.lineTo(400, 400)
     ctx.stroke()
 
-    renderMentalStateBars(ctx, 0, agents[0].mentalState)
-    renderMentalStateBars(ctx, 1, agents[1].mentalState)
-  }
-
-  const renderMentalStateBars = (ctx: CanvasRenderingContext2D, agentIndex: number, state: MentalState) => {
-    const x = agentIndex === 0 ? 130 : 550
-    const barWidth = 120
-    const barHeight = 10
-
-    const drawBar = (y: number, value: number, color: string, label: string) => {
-      ctx.fillStyle = "#333333"
-      ctx.fillRect(x, y, barWidth, barHeight)
-      ctx.fillStyle = color
-      ctx.fillRect(x, y, value * barWidth, barHeight)
-      ctx.strokeStyle = "#FFFFFF"
-      ctx.strokeRect(x, y, barWidth, barHeight)
+    // Draw agent positions/indicators
+    const agentColors = ["#0066FF", "#FF6600"]
+    const agentActive = [battleState.currentAgent === 0, battleState.currentAgent === 1]
+    
+    for (let i = 0; i < 2; i++) {
+      const x = i === 0 ? 150 : 550
+      const isActive = agentActive[i] && battleState.isActive
+      
+      // Draw agent box with glow effect if active
+      if (isActive) {
+        ctx.shadowColor = agentColors[i]
+        ctx.shadowBlur = 20
+      }
+      
+      ctx.fillStyle = agentColors[i]
+      ctx.fillRect(x, 150, 100, 100)
+      
+      // Reset shadow
+      ctx.shadowBlur = 0
+      
+      // Draw agent labels
       ctx.fillStyle = "#FFFFFF"
-      ctx.font = "8px 'Press Start 2P', monospace"
-      ctx.fillText(`${label}: ${(value * 100).toFixed(0)}%`, x, y + barHeight + 10)
+      ctx.font = "12px 'Press Start 2P', monospace"
+      ctx.fillText(`AGENT ${i}`, x + 10, 210)
+      
+      // Draw status indicator
+      if (isActive) {
+        ctx.fillStyle = "#FFFF00"
+        ctx.beginPath()
+        ctx.arc(x + 85, 165, 5, 0, 2 * Math.PI)
+        ctx.fill()
+      }
     }
-
-    drawBar(150, state.trust, "#0066FF", "TRUST")
-    drawBar(180, state.memory, "#00FF66", "MEMORY")
-    drawBar(210, state.belief, "#9966FF", "BELIEF")
   }
 
   const handleStreamEvent = (event: MessageEvent) => {
@@ -237,7 +280,25 @@ export default function AgentBattleArena() {
   const startBattle = async () => {
     if (battleState.isStreaming) return
 
+    // Validate inputs
+    if (!apiKey.trim()) {
+      setBattleState(prev => ({
+        ...prev,
+        battleLog: ["> ❌ Please provide an OpenAI API key."]
+      }))
+      return
+    }
+
+    if (maxTurns < 1 || maxTurns > 20) {
+      setBattleState(prev => ({
+        ...prev,
+        battleLog: ["> ❌ Max turns must be between 1 and 20."]
+      }))
+      return
+    }
+
     setBattleState({ ...initialBattleState, battleLog: ["> Initializing..."] })
+    setShowConfig(false)
 
     const gameId = `battle-${Date.now()}`
 
@@ -257,7 +318,11 @@ export default function AgentBattleArena() {
       const startResponse = await fetch(`${serverURL}/start-game`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ game_id: gameId, max_turns: 5 }),
+        body: JSON.stringify({ 
+          game_id: gameId, 
+          max_turns: maxTurns,
+          api_key: apiKey 
+        }),
       })
 
       if (!startResponse.ok) {
@@ -315,6 +380,7 @@ export default function AgentBattleArena() {
   const restartBattle = () => {
     eventSourceRef.current?.close()
     setBattleState(initialBattleState)
+    setShowConfig(true)
   }
 
   return (
@@ -330,52 +396,155 @@ export default function AgentBattleArena() {
           <p className="text-sm text-gray-400 mt-2">Mental Manipulation Battle</p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Configuration Panel */}
+        {showConfig && (
+          <Card className="mb-6 border border-black bg-[#2a2a2a]">
+            <CardContent className="p-6">
+              <h3 className="text-white text-sm mb-4 flex items-center">
+                <Settings className="w-4 h-4 mr-2" /> BATTLE CONFIGURATION
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="apiKey" className="text-white text-xs">
+                    OpenAI API Key *
+                  </Label>
+                  <Input
+                    id="apiKey"
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="sk-..."
+                    className="bg-[#1a1a1a] border-gray-600 text-white text-xs"
+                  />
+                  <p className="text-gray-400 text-[10px]">
+                    Your API key is never stored and only used for this session
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="maxTurns" className="text-white text-xs">
+                    Max Turns (1-20)
+                  </Label>
+                  <Input
+                    id="maxTurns"
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={maxTurns}
+                    onChange={(e) => setMaxTurns(parseInt(e.target.value) || 5)}
+                    className="bg-[#1a1a1a] border-gray-600 text-white text-xs"
+                  />
+                  <p className="text-gray-400 text-[10px]">
+                    Number of turns each agent gets before battle ends
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
           {[0, 1].map((i) => (
-            <Card key={i} className="border border-black bg-[#333333]">
+            <Card 
+              key={i} 
+              className={`border-2 bg-[#333333] transition-all duration-300 ${
+                battleState.currentAgent === i && battleState.isActive 
+                  ? 'border-yellow-400 shadow-lg shadow-yellow-400/20' 
+                  : 'border-gray-600'
+              }`}
+            >
               <CardContent className="p-4">
                 <h3 className="text-white text-sm mb-3">
                   <Target className="w-4 h-4 inline mr-2" /> AGENT {i}
                 </h3>
-                <div className="space-y-2 text-white text-xs">
-                  <div>
-                    STATUS: {battleState.isActive ? (battleState.currentAgent === i ? "THINKING" : "WAITING") : "IDLE"}
+                <div className="space-y-2 text-white text-xs mb-4">
+                  <div className="flex items-center gap-2">
+                    <span>STATUS:</span>
+                    {battleState.isActive ? (
+                      battleState.currentAgent === i ? (
+                        <span className="flex items-center gap-1 text-yellow-400">
+                          <span className="animate-pulse">●</span> THINKING
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">WAITING</span>
+                      )
+                    ) : (
+                      <span className="text-gray-500">IDLE</span>
+                    )}
                   </div>
-                  <div>TRUST: {(battleState.agents[i].mentalState.trust * 100).toFixed(0)}%</div>
-                  <div>MEMORY: {(battleState.agents[i].mentalState.memory * 100).toFixed(0)}%</div>
-                  <div>BELIEF: {(battleState.agents[i].mentalState.belief * 100).toFixed(0)}%</div>
+                </div>
+                
+                {/* Mental State Bars */}
+                <div className="space-y-2">
+                  <MentalStateBar 
+                    label="TRUST" 
+                    value={battleState.agents[i].mentalState.trust} 
+                    color="#0066FF" 
+                  />
+                  <MentalStateBar 
+                    label="MEMORY" 
+                    value={battleState.agents[i].mentalState.memory} 
+                    color="#00FF66" 
+                  />
+                  <MentalStateBar 
+                    label="BELIEF" 
+                    value={battleState.agents[i].mentalState.belief} 
+                    color="#9966FF" 
+                  />
                 </div>
               </CardContent>
             </Card>
           ))}
+        </div>
 
-          <Card className="border-2 border-black bg-[#2a2a2a] order-first lg:order-none">
-            <CardContent className="p-2">
-              <canvas ref={canvasRef} className="w-full border border-black" style={{ imageRendering: "pixelated" }} />
-              <div className="flex justify-center gap-4 mt-4">
-                {!battleState.isActive ? (
-                  <Button
-                    onClick={startBattle}
-                    className="bg-[#9966FF] hover:bg-[#8855EE] text-white"
-                    disabled={battleState.isStreaming}
-                  >
-                    <Zap className="w-4 h-4 mr-2" /> START BATTLE
-                  </Button>
-                ) : (
-                  <Button onClick={restartBattle} variant="destructive">
-                    RESTART
-                  </Button>
-                )}
-              </div>
-              {battleState.winner && (
-                <div className="mt-4 p-2 border border-gray-600 rounded bg-[#1a1a1a] text-center">
-                  <div className="text-white text-xs">
-                    WINNER: {battleState.winner} | REASON: {battleState.reason.toUpperCase()}
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+        {/* Arena Canvas */}
+        {/*<Card className="mb-6 border-2 border-black bg-[#2a2a2a]">*/}
+        {/*  <CardContent className="p-2">*/}
+        {/*    <canvas ref={canvasRef} className="w-full border border-black" style={{ imageRendering: "pixelated" }} />*/}
+        {/*    {battleState.winner && (*/}
+        {/*      <div className="mt-4 p-2 border border-gray-600 rounded bg-[#1a1a1a] text-center">*/}
+        {/*        <div className="text-white text-xs">*/}
+        {/*          WINNER: {battleState.winner} | REASON: {battleState.reason.toUpperCase()}*/}
+        {/*        </div>*/}
+        {/*      </div>*/}
+        {/*    )}*/}
+        {/*  </CardContent>*/}
+        {/*</Card>*/}
+
+        {/* Battle Controls */}
+        <div className="flex justify-center gap-4 mt-6">
+          {!battleState.isActive ? (
+            <Button
+              onClick={startBattle}
+              className="bg-[#9966FF] hover:bg-[#8855EE] text-white disabled:bg-gray-600"
+              disabled={battleState.isStreaming || !apiKey.trim() || maxTurns < 1 || maxTurns > 20}
+            >
+              <Zap className="w-4 h-4 mr-2" /> START BATTLE
+            </Button>
+          ) : (
+            <Button onClick={restartBattle} variant="destructive">
+              RESTART
+            </Button>
+          )}
+          
+          {showConfig && (
+            <Button
+              onClick={() => setShowConfig(false)}
+              variant="outline"
+              className="border-gray-600 text-gray-300 hover:bg-gray-700"
+            >
+              HIDE CONFIG
+            </Button>
+          )}
+          
+          {!showConfig && !battleState.isActive && (
+            <Button
+              onClick={() => setShowConfig(true)}
+              variant="outline"
+              className="border-gray-600 text-gray-300 hover:bg-gray-700"
+            >
+              <Settings className="w-4 h-4 mr-2" /> CONFIG
+            </Button>
+          )}
         </div>
 
         <Card className="mt-6 border border-black bg-[#2a2a2a]">
