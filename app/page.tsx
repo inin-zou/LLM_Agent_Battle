@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -20,6 +20,16 @@ interface AgentState {
   beliefs: string[]
 }
 
+interface LogoAnimation {
+  x: number
+  y: number
+  rotation: number
+  scale: number
+  isAnimating: boolean
+  animationType: string
+  animationProgress: number
+}
+
 interface BattleState {
   isActive: boolean
   isStreaming: boolean
@@ -29,11 +39,22 @@ interface BattleState {
   agents: [AgentState, AgentState]
   turn: number
   currentAgent: number | null
+  logoAnimations: [LogoAnimation, LogoAnimation]
 }
 
 const initialAgentState: AgentState = {
   mentalState: { trust: 1, memory: 1, belief: 1 },
   beliefs: [],
+}
+
+const initialLogoAnimation: LogoAnimation = {
+  x: 0,
+  y: 0,
+  rotation: 0,
+  scale: 1,
+  isAnimating: false,
+  animationType: 'idle',
+  animationProgress: 0,
 }
 
 const initialBattleState: BattleState = {
@@ -45,6 +66,7 @@ const initialBattleState: BattleState = {
   agents: [JSON.parse(JSON.stringify(initialAgentState)), JSON.parse(JSON.stringify(initialAgentState))],
   turn: 0,
   currentAgent: null,
+  logoAnimations: [JSON.parse(JSON.stringify(initialLogoAnimation)), JSON.parse(JSON.stringify(initialLogoAnimation))],
 }
 
 // --- Mental State Bar Component ---
@@ -82,10 +104,13 @@ export default function AgentBattleArena() {
   const eventSourceRef = useRef<EventSource | null>(null)
   const [battleState, setBattleState] = useState<BattleState>(initialBattleState)
   const logContainerRef = useRef<HTMLDivElement>(null)
+  const logoImagesRef = useRef<Record<string, HTMLImageElement>>({})
+  const animationFrameRef = useRef<number | null>(null)
 
   // Game configuration state
   const [maxTurns, setMaxTurns] = useState<number>(5)
-  const [selectedModel, setSelectedModel] = useState<string>("openai:gpt-4o")
+  const [selectedPlayer1Model, setSelectedPlayer1Model] = useState<string>("openai:gpt-4o")
+  const [selectedPlayer2Model, setSelectedPlayer2Model] = useState<string>("anthropic:claude-3-5-sonnet-20241022")
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({
     openai: "",
     anthropic: "",
@@ -121,6 +146,33 @@ export default function AgentBattleArena() {
     }
   }, [battleState.battleLog])
 
+  // Load provider logos
+  useEffect(() => {
+    const loadLogos = async () => {
+      console.log('Loading provider logos...')
+      const providers = ['openai', 'anthropic', 'google', 'mistral']
+      const logoPromises = providers.map(provider => {
+        return new Promise<void>((resolve) => {
+          const img = new Image()
+          img.onload = () => {
+            logoImagesRef.current[provider] = img
+            console.log(`Logo loaded for ${provider}:`, img.src)
+            resolve()
+          }
+          img.onerror = () => {
+            console.warn(`Failed to load logo for ${provider}`)
+            resolve()
+          }
+          img.src = `/images/${provider}.png`
+          console.log(`Attempting to load logo: ${img.src}`)
+        })
+      })
+      await Promise.all(logoPromises)
+      console.log('All logos loaded:', Object.keys(logoImagesRef.current))
+    }
+    loadLogos()
+  }, [])
+
   // Fetch available models on component mount
   useEffect(() => {
     const fetchModels = async () => {
@@ -142,23 +194,152 @@ export default function AgentBattleArena() {
   }, [])
 
   // Helper functions
-  const getCurrentProvider = () => {
-    return selectedModel.split(':')[0]
+  const getRequiredApiKeys = () => {
+    const player1Provider = selectedPlayer1Model.split(':')[0]
+    const player2Provider = selectedPlayer2Model.split(':')[0]
+    const providers = [player1Provider]
+    if (player2Provider !== player1Provider) {
+      providers.push(player2Provider)
+    }
+    return providers
   }
 
-  const getRequiredApiKeys = () => {
-    const provider = getCurrentProvider()
-    return [provider]
+  const getProviderDisplayName = (provider: string) => {
+    return availableModels?.providers?.[provider]?.name || provider
   }
 
   const updateApiKey = (provider: string, value: string) => {
     setApiKeys(prev => ({ ...prev, [provider]: value }))
   }
 
-  // Render canvas whenever battle state changes
+  // Animation logic - simplified without complex refs
+  const startLogoAnimation = (agentIndex: number) => {
+    console.log(`Starting animation for agent ${agentIndex}`)
+    const animationTypes = ['bounce', 'float', 'wobble', 'spin', 'pulse']
+    const randomType = animationTypes[Math.floor(Math.random() * animationTypes.length)]
+    
+    setBattleState(prev => {
+      const newAnimations = [...prev.logoAnimations] as [LogoAnimation, LogoAnimation]
+      newAnimations[agentIndex] = {
+        ...newAnimations[agentIndex],
+        isAnimating: true,
+        animationType: randomType,
+        animationProgress: 0,
+      }
+      console.log(`Animation started: ${randomType} for agent ${agentIndex}`)
+      return {
+        ...prev,
+        logoAnimations: newAnimations
+      }
+    })
+  }
+
+  // Simplified animation system using useCallback
+  const updateAnimations = useCallback(() => {
+    setBattleState(prev => {
+      const newAnimations = [...prev.logoAnimations] as [LogoAnimation, LogoAnimation]
+      let hasChanges = false
+      
+      for (let i = 0; i < 2; i++) {
+        if (newAnimations[i].isAnimating) {
+          hasChanges = true
+          newAnimations[i].animationProgress += 0.05
+          
+          const progress = newAnimations[i].animationProgress
+          const type = newAnimations[i].animationType
+          
+          switch (type) {
+            case 'bounce':
+              newAnimations[i].y = Math.sin(progress * Math.PI * 6) * 30 * (1 - progress / 2)
+              newAnimations[i].x = (Math.random() - 0.5) * 20 * (1 - progress / 2)
+              break
+            case 'float':
+              newAnimations[i].y = Math.sin(progress * Math.PI * 4) * 20
+              newAnimations[i].x = Math.cos(progress * Math.PI * 3) * 15
+              break
+            case 'wobble':
+              newAnimations[i].rotation = Math.sin(progress * Math.PI * 8) * 15 * (1 - progress / 3)
+              newAnimations[i].x = Math.sin(progress * Math.PI * 10) * 10
+              break
+            case 'spin':
+              newAnimations[i].rotation = progress * 360 * 2
+              newAnimations[i].scale = 1 + Math.sin(progress * Math.PI * 4) * 0.2
+              break
+            case 'pulse':
+              newAnimations[i].scale = 1 + Math.sin(progress * Math.PI * 8) * 0.3
+              break
+          }
+          
+          if (progress >= 2) {
+            // Return to resting position
+            newAnimations[i] = {
+              x: 0,
+              y: 0,
+              rotation: 0,
+              scale: 1,
+              isAnimating: false,
+              animationType: 'idle',
+              animationProgress: 0,
+            }
+            console.log(`Animation completed for agent ${i}`)
+          }
+        }
+      }
+      
+      // Only update if there are changes
+      if (!hasChanges) {
+        return prev
+      }
+      
+      return {
+        ...prev,
+        logoAnimations: newAnimations
+      }
+    })
+  }, [])
+
+  // Animation loop - simplified
+  useEffect(() => {
+    const animate = () => {
+      // Check if any animation is active
+      const hasActiveAnimation = battleState.logoAnimations.some(anim => anim.isAnimating)
+      
+      if (hasActiveAnimation) {
+        updateAnimations()
+      }
+      
+      animationFrameRef.current = requestAnimationFrame(animate)
+    }
+    
+    if (!animationFrameRef.current) {
+      animationFrameRef.current = requestAnimationFrame(animate)
+    }
+    
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+        animationFrameRef.current = null
+      }
+    }
+  }, [battleState.logoAnimations, updateAnimations])
+
+  // Trigger animation when current agent changes
+  useEffect(() => {
+    if (battleState.currentAgent !== null && battleState.isActive) {
+      startLogoAnimation(battleState.currentAgent)
+    }
+  }, [battleState.currentAgent, battleState.isActive])
+
+  // Initial canvas render
   useEffect(() => {
     renderCanvas()
-  }, [battleState.agents, battleState.currentAgent, battleState.isActive])
+  }, [])
+
+  // Render canvas whenever battle state changes OR when model selection changes
+  useEffect(() => {
+    console.log('Rendering canvas due to state change')
+    renderCanvas()
+  }, [battleState.agents, battleState.currentAgent, battleState.isActive, selectedPlayer1Model, selectedPlayer2Model, battleState.logoAnimations])
 
   // Cleanup EventSource on component unmount
   useEffect(() => {
@@ -177,10 +358,18 @@ export default function AgentBattleArena() {
     renderMentalArena(ctx, battleState.agents)
   }
 
+  const getProviderFromModel = (model: string): string => {
+    return model.split(':')[0]
+  }
+
   const renderMentalArena = (ctx: CanvasRenderingContext2D, agents: [AgentState, AgentState]) => {
     ctx.clearRect(0, 0, 800, 400)
+
+    // Background
     ctx.fillStyle = "#1e1e1e"
     ctx.fillRect(0, 0, 800, 400)
+
+    // Grid pattern
     ctx.strokeStyle = "#333333"
     ctx.lineWidth = 1
     for (let i = 0; i < 800; i += 50) {
@@ -195,6 +384,8 @@ export default function AgentBattleArena() {
       ctx.lineTo(800, i)
       ctx.stroke()
     }
+
+    // Center divider
     ctx.strokeStyle = "#666666"
     ctx.lineWidth = 2
     ctx.beginPath()
@@ -202,39 +393,107 @@ export default function AgentBattleArena() {
     ctx.lineTo(400, 400)
     ctx.stroke()
 
-    // Draw agent positions/indicators
+    // Draw agent logos
     const agentColors = ["#0066FF", "#FF6600"]
     const agentActive = [battleState.currentAgent === 0, battleState.currentAgent === 1]
+    const basePositions = [{ x: 200, y: 200 }, { x: 600, y: 200 }]
+    const logoSize = 80
 
     for (let i = 0; i < 2; i++) {
-      const x = i === 0 ? 150 : 550
+      const baseX = basePositions[i].x
+      const baseY = basePositions[i].y
       const isActive = agentActive[i] && battleState.isActive
+      const animation = battleState.logoAnimations[i]
 
-      // Draw agent box with glow effect if active
-      if (isActive) {
-        ctx.shadowColor = agentColors[i]
-        ctx.shadowBlur = 20
+      // Calculate final position with animation offset
+      const finalX = baseX + animation.x
+      const finalY = baseY + animation.y
+
+      // Get provider for current player
+      const playerModel = i === 0 ? selectedPlayer1Model : selectedPlayer2Model
+      const provider = getProviderFromModel(playerModel)
+      const logoImage = logoImagesRef.current[provider]
+
+      console.log(`Rendering agent ${i}: model=${playerModel}, provider=${provider}, hasLogo=${!!logoImage}, animation=${JSON.stringify(animation)}`)
+
+      // Save context for transformations
+      ctx.save()
+
+      // Move to logo center
+      ctx.translate(finalX, finalY)
+
+      // Apply rotation
+      if (animation.rotation !== 0) {
+        ctx.rotate((animation.rotation * Math.PI) / 180)
       }
 
-      ctx.fillStyle = agentColors[i]
-      ctx.fillRect(x, 150, 100, 100)
+      // Apply scaling
+      if (animation.scale !== 1) {
+        ctx.scale(animation.scale, animation.scale)
+      }
 
-      // Reset shadow
+      // Draw glow effect if active
+      if (isActive) {
+        ctx.shadowColor = agentColors[i]
+        ctx.shadowBlur = 30
+        ctx.globalAlpha = 0.8
+      }
+
+      // Draw the logo image or fallback
+      if (logoImage) {
+        ctx.drawImage(logoImage, -logoSize/2, -logoSize/2, logoSize, logoSize)
+      } else {
+        // Fallback colored rectangle
+        ctx.fillStyle = agentColors[i]
+        ctx.fillRect(-logoSize/2, -logoSize/2, logoSize, logoSize)
+
+        // Provider name
+        ctx.fillStyle = "#FFFFFF"
+        ctx.font = "10px 'Press Start 2P', monospace"
+        ctx.textAlign = "center"
+        ctx.fillText(provider.toUpperCase(), 0, 5)
+      }
+
+      // Reset shadow and alpha
       ctx.shadowBlur = 0
+      ctx.globalAlpha = 1
 
-      // Draw agent labels
+      // Restore context
+      ctx.restore()
+
+      // Draw agent label below logo
       ctx.fillStyle = "#FFFFFF"
       ctx.font = "12px 'Press Start 2P', monospace"
-      ctx.fillText(`AGENT ${i}`, x + 10, 210)
+      ctx.textAlign = "center"
+      ctx.fillText(`AGENT ${i}`, baseX, baseY + logoSize/2 + 20)
 
-      // Draw status indicator
+      // Draw model name
+      if (playerModel) {
+        ctx.fillStyle = "#CCCCCC"
+        ctx.font = "8px 'Press Start 2P', monospace"
+        const modelName = playerModel.split(':')[1]
+        ctx.fillText(modelName, baseX, baseY + logoSize/2 + 35)
+      }
+
+      // Draw active indicator
       if (isActive) {
         ctx.fillStyle = "#FFFF00"
         ctx.beginPath()
-        ctx.arc(x + 85, 165, 5, 0, 2 * Math.PI)
+        ctx.arc(baseX + logoSize/2 - 10, baseY - logoSize/2 + 10, 6, 0, 2 * Math.PI)
         ctx.fill()
+
+        // Pulsing effect for active indicator
+        ctx.globalAlpha = 0.6 + 0.4 * Math.sin(Date.now() * 0.01)
+        ctx.fillStyle = "#FFFF00"
+        ctx.beginPath()
+        ctx.arc(baseX + logoSize/2 - 10, baseY - logoSize/2 + 10, 10, 0, 2 * Math.PI)
+        ctx.fill()
+        ctx.globalAlpha = 1
       }
     }
+
+    // Reset text alignment
+    ctx.textAlign = "left"
   }
 
   const handleStreamEvent = (event: MessageEvent) => {
@@ -342,13 +601,13 @@ export default function AgentBattleArena() {
     if (battleState.isStreaming) return
 
     // Validate inputs
-    const provider = getCurrentProvider()
-    const requiredApiKey = apiKeys[provider]
+    const requiredProviders = getRequiredApiKeys()
+    const missingApiKeys = requiredProviders.filter(provider => !apiKeys[provider]?.trim())
 
-    if (!requiredApiKey?.trim()) {
+    if (missingApiKeys.length > 0) {
       setBattleState(prev => ({
         ...prev,
-        battleLog: [`> ❌ Please provide an API key for ${provider}.`]
+        battleLog: [`> ❌ Please provide API keys for: ${missingApiKeys.map(p => getProviderDisplayName(p)).join(', ')}`]
       }))
       return
     }
@@ -361,7 +620,11 @@ export default function AgentBattleArena() {
       return
     }
 
-    setBattleState({ ...initialBattleState, battleLog: ["> Initializing..."] })
+    setBattleState({
+      ...initialBattleState,
+      battleLog: ["> Initializing..."],
+      logoAnimations: [JSON.parse(JSON.stringify(initialLogoAnimation)), JSON.parse(JSON.stringify(initialLogoAnimation))]
+    })
     setShowConfig(false)
 
     const gameId = `battle-${Date.now()}`
@@ -378,14 +641,15 @@ export default function AgentBattleArena() {
       setBattleState((prev) => ({ ...prev, battleLog: [...prev.battleLog, `> Server online: ${serverInfo.message}`] }))
 
       // Step 2: Start the game.
-      setBattleState((prev) => ({ ...prev, battleLog: [...prev.battleLog, `> Starting game ${gameId} with ${selectedModel}...`] }))
+      setBattleState((prev) => ({ ...prev, battleLog: [...prev.battleLog, `> Starting game ${gameId}...`, `> Player 1: ${selectedPlayer1Model}`, `> Player 2: ${selectedPlayer2Model}`] }))
       const startResponse = await fetch(`${serverURL}/start-game`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           game_id: gameId,
           max_turns: maxTurns,
-          model: selectedModel,
+          player1_model: selectedPlayer1Model,
+          player2_model: selectedPlayer2Model,
           api_keys: apiKeys
         }),
       })
@@ -445,7 +709,10 @@ export default function AgentBattleArena() {
 
   const restartBattle = () => {
     eventSourceRef.current?.close()
-    setBattleState(initialBattleState)
+    setBattleState({
+      ...initialBattleState,
+      logoAnimations: [JSON.parse(JSON.stringify(initialLogoAnimation)), JSON.parse(JSON.stringify(initialLogoAnimation))]
+    })
     setShowConfig(true)
   }
 
@@ -470,23 +737,24 @@ export default function AgentBattleArena() {
                 <Settings className="w-4 h-4 mr-2" /> BATTLE CONFIGURATION
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="modelSelect" className="text-white text-xs">
-                    AI Model * {availableModels?.providers ? 
-                      `(${Object.values(availableModels.providers).reduce((total: number, provider: any) => total + provider.models.length, 0)} models available)` : 
+                {/* Player 1 Model Selection */}
+                <div className="space-y-2">
+                  <Label htmlFor="player1ModelSelect" className="text-white text-xs">
+                    Player 1 Model * {availableModels?.providers ?
+                      `(${Object.values(availableModels.providers).reduce((total: number, provider: any) => total + provider.models.length, 0)} models available)` :
                       '(Loading...)'}
                   </Label>
-                  <Select value={selectedModel} onValueChange={setSelectedModel}>
+                  <Select value={selectedPlayer1Model} onValueChange={setSelectedPlayer1Model}>
                     <SelectTrigger className="bg-[#1a1a1a] border-gray-600 text-white text-xs">
-                      <SelectValue placeholder="Select a model" />
+                      <SelectValue placeholder="Select Player 1 model" />
                     </SelectTrigger>
                     <SelectContent className="bg-[#1a1a1a] border-gray-600">
                       {availableModels?.providers ? (
                         Object.entries(availableModels.providers).map(([providerId, providerInfo]: [string, any]) => (
-                          <div key={providerId}>
+                          <div key={`p1-${providerId}`}>
                             {providerInfo.models.map((model: string) => (
                               <SelectItem
-                                key={`${providerId}:${model}`}
+                                key={`p1-${providerId}:${model}`}
                                 value={`${providerId}:${model}`}
                                 className="text-white hover:bg-gray-700"
                               >
@@ -506,20 +774,71 @@ export default function AgentBattleArena() {
                       )}
                     </SelectContent>
                   </Select>
-                  <p className="text-gray-400 text-[10px]">
-                    Select the AI model and provider for the battle. Newer models (marked NEW) offer improved performance.
-                  </p>
-                  {selectedModel && (
-                    <div className="mt-2 p-2 bg-gray-800 rounded text-[10px] text-gray-300">
-                      <strong>Selected:</strong> {selectedModel}
-                      {selectedModel.includes('gemini-2.5') && <div>🚀 Latest Gemini model with enhanced reasoning</div>}
-                      {selectedModel.includes('mistral-large') && <div>🧠 Most capable Mistral model</div>}
-                      {selectedModel.includes('mistral-medium-2505') && <div>✨ Latest medium-size model (May 2025)</div>}
-                      {selectedModel.includes('gpt-4o') && <div>⚡ OpenAI's fastest and most capable model</div>}
-                      {selectedModel.includes('claude-3-5') && <div>🎯 Anthropic's most advanced model</div>}
+                  {selectedPlayer1Model && (
+                    <div className="mt-1 p-2 bg-gray-800 rounded text-[10px] text-gray-300">
+                      <strong>Player 1:</strong> {selectedPlayer1Model}
                     </div>
                   )}
                 </div>
+
+                {/* Player 2 Model Selection */}
+                <div className="space-y-2">
+                  <Label htmlFor="player2ModelSelect" className="text-white text-xs">
+                    Player 2 Model *
+                  </Label>
+                  <Select value={selectedPlayer2Model} onValueChange={setSelectedPlayer2Model}>
+                    <SelectTrigger className="bg-[#1a1a1a] border-gray-600 text-white text-xs">
+                      <SelectValue placeholder="Select Player 2 model" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#1a1a1a] border-gray-600">
+                      {availableModels?.providers ? (
+                        Object.entries(availableModels.providers).map(([providerId, providerInfo]: [string, any]) => (
+                          <div key={`p2-${providerId}`}>
+                            {providerInfo.models.map((model: string) => (
+                              <SelectItem
+                                key={`p2-${providerId}:${model}`}
+                                value={`${providerId}:${model}`}
+                                className="text-white hover:bg-gray-700"
+                              >
+                                <span className="text-orange-400">{providerInfo.name}</span>: {model}
+                                {/* Add indicators for newest models */}
+                                {(model.includes('2.5') || model.includes('2025') || model.includes('2505')) &&
+                                  <span className="ml-2 text-xs bg-green-600 px-1 rounded">NEW</span>
+                                }
+                              </SelectItem>
+                            ))}
+                          </div>
+                        ))
+                      ) : (
+                        <SelectItem value="loading" className="text-gray-400" disabled>
+                          Loading models from server...
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {selectedPlayer2Model && (
+                    <div className="mt-1 p-2 bg-gray-800 rounded text-[10px] text-gray-300">
+                      <strong>Player 2:</strong> {selectedPlayer2Model}
+                    </div>
+                  )}
+                </div>
+
+                {/* Model Summary */}
+                {(selectedPlayer1Model || selectedPlayer2Model) && (
+                  <div className="md:col-span-2 mt-2 p-3 bg-gray-900 rounded border border-gray-700">
+                    <h4 className="text-white text-xs font-bold mb-2">BATTLE SETUP</h4>
+                    <div className="grid grid-cols-2 gap-4 text-[10px]">
+                      <div>
+                        <span className="text-blue-400">PLAYER 1:</span>
+                        <div className="text-white">{selectedPlayer1Model || 'Not selected'}</div>
+                      </div>
+                      <div>
+                        <span className="text-orange-400">PLAYER 2:</span>
+                        <div className="text-white">{selectedPlayer2Model || 'Not selected'}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Dynamic API Key Inputs */}
                 {getRequiredApiKeys().map((provider) => {
@@ -544,7 +863,7 @@ export default function AgentBattleArena() {
                   )
                 })}
 
-                <div className="space-y-2">
+                <div className="space-y-2 md:col-span-2">
                   <Label htmlFor="maxTurns" className="text-white text-xs">
                     Max Turns (1-20)
                   </Label>
@@ -567,35 +886,52 @@ export default function AgentBattleArena() {
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-          {[0, 1].map((i) => (
-            <Card
-              key={i}
-              className={`border-2 bg-[#333333] transition-all duration-300 ${
-                battleState.currentAgent === i && battleState.isActive 
-                  ? 'border-yellow-400 shadow-lg shadow-yellow-400/20' 
-                  : 'border-gray-600'
-              }`}
-            >
-              <CardContent className="p-4">
-                <h3 className="text-white text-sm mb-3">
-                  <Target className="w-4 h-4 inline mr-2" /> AGENT {i}
-                </h3>
-                <div className="space-y-2 text-white text-xs mb-4">
-                  <div className="flex items-center gap-2">
-                    <span>STATUS:</span>
-                    {battleState.isActive ? (
-                      battleState.currentAgent === i ? (
-                        <span className="flex items-center gap-1 text-yellow-400">
-                          <span className="animate-pulse">●</span> THINKING
-                        </span>
+          {[0, 1].map((i) => {
+            const playerModel = i === 0 ? selectedPlayer1Model : selectedPlayer2Model
+            const playerColor = i === 0 ? 'blue' : 'orange'
+            return (
+              <Card
+                key={i}
+                className={`border-2 bg-[#333333] transition-all duration-300 ${
+                  battleState.currentAgent === i && battleState.isActive 
+                    ? 'border-yellow-400 shadow-lg shadow-yellow-400/20' 
+                    : 'border-gray-600'
+                }`}
+              >
+                <CardContent className="p-4">
+                  <h3 className="text-white text-sm mb-3">
+                    <Target className="w-4 h-4 inline mr-2" /> AGENT {i}
+                  </h3>
+
+                  {/* Model Information */}
+                  {playerModel && (
+                    <div className="mb-3 p-2 bg-gray-800 rounded">
+                      <div className="text-[10px] text-gray-400">MODEL</div>
+                      <div className={`text-xs ${i === 0 ? 'text-blue-400' : 'text-orange-400'}`}>
+                        {playerModel.split(':')[1]}
+                      </div>
+                      <div className="text-[9px] text-gray-500">
+                        {getProviderDisplayName(playerModel.split(':')[0])}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="space-y-2 text-white text-xs mb-4">
+                    <div className="flex items-center gap-2">
+                      <span>STATUS:</span>
+                      {battleState.isActive ? (
+                        battleState.currentAgent === i ? (
+                          <span className="flex items-center gap-1 text-yellow-400">
+                            <span className="animate-pulse">●</span> THINKING
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">WAITING</span>
+                        )
                       ) : (
-                        <span className="text-gray-400">WAITING</span>
-                      )
-                    ) : (
-                      <span className="text-gray-500">IDLE</span>
-                    )}
+                        <span className="text-gray-500">IDLE</span>
+                      )}
+                    </div>
                   </div>
-                </div>
 
                 {/* Mental State Bars */}
                 <div className="space-y-2">
@@ -617,38 +953,60 @@ export default function AgentBattleArena() {
                 </div>
               </CardContent>
             </Card>
-          ))}
+            )
+          })}
         </div>
 
         {/* Arena Canvas */}
-        {/*<Card className="mb-6 border-2 border-black bg-[#2a2a2a]">*/}
-        {/*  <CardContent className="p-2">*/}
-        {/*    <canvas ref={canvasRef} className="w-full border border-black" style={{ imageRendering: "pixelated" }} />*/}
-        {/*    {battleState.winner && (*/}
-        {/*      <div className="mt-4 p-2 border border-gray-600 rounded bg-[#1a1a1a] text-center">*/}
-        {/*        <div className="text-white text-xs">*/}
-        {/*          WINNER: {battleState.winner} | REASON: {battleState.reason.toUpperCase()}*/}
-        {/*        </div>*/}
-        {/*      </div>*/}
-        {/*    )}*/}
-        {/*  </CardContent>*/}
-        {/*</Card>*/}
+        <Card className="mb-6 border-2 border-black bg-[#2a2a2a]">
+          <CardContent className="p-2">
+            <h3 className="text-white text-sm mb-4 text-center">BATTLE ARENA</h3>
+            <canvas ref={canvasRef} className="w-full border border-black" style={{ imageRendering: "pixelated" }} />
+            {battleState.winner && (
+              <div className="mt-4 p-2 border border-gray-600 rounded bg-[#1a1a1a] text-center">
+                <div className="text-white text-xs">
+                  WINNER: {battleState.winner} | REASON: {battleState.reason.toUpperCase()}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Battle Controls */}
         <div className="flex justify-center gap-4 mt-6">
-          {!battleState.isActive ? (
-            <Button
-              onClick={startBattle}
-              className="bg-[#9966FF] hover:bg-[#8855EE] text-white disabled:bg-gray-600"
-              disabled={battleState.isStreaming || !apiKeys[getCurrentProvider()]?.trim() || maxTurns < 1 || maxTurns > 20}
-            >
-              <Zap className="w-4 h-4 mr-2" /> START BATTLE
-            </Button>
-          ) : (
-            <Button onClick={restartBattle} variant="destructive">
-              RESTART
-            </Button>
-          )}
+        {!battleState.isActive ? (
+        <Button
+        onClick={startBattle}
+        className="bg-[#9966FF] hover:bg-[#8855EE] text-white disabled:bg-gray-600"
+        disabled={
+        battleState.isStreaming || 
+        !selectedPlayer1Model || 
+        !selectedPlayer2Model || 
+        getRequiredApiKeys().some(provider => !apiKeys[provider]?.trim()) || 
+        maxTurns < 1 || 
+        maxTurns > 20
+        }
+        >
+        <Zap className="w-4 h-4 mr-2" /> START BATTLE
+        </Button>
+        ) : (
+        <Button onClick={restartBattle} variant="destructive">
+        RESTART
+        </Button>
+        )}
+
+          {/* Test Animation Button */}
+          <Button
+            onClick={() => {
+              console.log('Testing animation manually...')
+              startLogoAnimation(0)
+              setTimeout(() => startLogoAnimation(1), 1000)
+            }}
+            variant="outline"
+            className="border-gray-600 text-gray-300 hover:bg-gray-700"
+          >
+            TEST ANIM
+          </Button>
 
           {showConfig && (
             <Button
